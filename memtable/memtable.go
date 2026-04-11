@@ -136,6 +136,47 @@ func (m *MemTable) findGE(key []byte, prev bool) (int, bool) {
 	}
 }
 
+// find less than ...
+// returns largest kv node that node.key < key
+// if there's no node.key < key, return 0
+func (m *MemTable) findLT(key []byte) int {
+	h := m.maxHeight - 1
+	node := 0
+	for {
+		next := m.nodeData[node+nNext+h]
+		off := m.nodeData[next]
+		if next != 0 && m.cmp.Compare(m.kvData[off:off+m.nodeData[next+nKey]], key) < 0 {
+			node = next
+		} else {
+			if h == 0 {
+				break
+			}
+			h--
+		}
+	}
+	return node
+}
+
+// find the max node in the skip list
+func (m *MemTable) findLast() int {
+	h := m.maxHeight - 1 // start with 0
+	node := 0
+	for {
+		next := m.nodeData[node+nNext+h]
+
+		// next == 0 means that this node is the last one in current level
+		if next == 0 {
+			if h == 0 {
+				break
+			}
+			h--
+		} else {
+			node = next
+		}
+	}
+	return node
+}
+
 // Put sets value for "key". It overwrites previous values.
 func (m *MemTable) Put(key, value []byte) error {
 	m.mu.Lock()
