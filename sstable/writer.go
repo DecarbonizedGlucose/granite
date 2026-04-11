@@ -3,6 +3,7 @@ package sstable
 import (
 	"encoding/binary"
 
+	"github.com/DecarbonizedGlucose/granite/filter"
 	"github.com/DecarbonizedGlucose/granite/util"
 )
 
@@ -74,6 +75,60 @@ func (w *blockWriter) datalen() int {
 	lenRestart := max(len(w.psRestart), 1)
 	// len of restart points + len of len + len of entries
 	return lenRestart*4 + 4 + w.buf.Len()
+}
+
+// ==================== Filter Writer ====================
+
+type filterWriter struct {
+	buf util.Buffer
+	gen filter.FilterGenerator
+
+	cntKey  int
+	offsets []uint32
+	baseLg  uint
+}
+
+func (w *filterWriter) add(key []byte) {
+	if w.gen == nil {
+		return
+	}
+	w.gen.Add(key)
+	w.cntKey++
+}
+
+func (w *filterWriter) generate() {
+	// record offset
+	w.offsets = append(w.offsets, uint32(w.buf.Len()))
+	// gen filter data
+	if w.cntKey > 0 {
+		w.gen.Generate(&w.buf)
+		w.cntKey = 0
+	}
+}
+
+func (w *filterWriter) flush(offset uint64) {
+	if w.gen == nil {
+		return
+	}
+	for x := int(offset / (1 << w.baseLg)); x > len(w.offsets); {
+		w.generate()
+	}
+}
+
+func (w *filterWriter) finish() error {
+	if w.gen == nil {
+		return nil
+	}
+
+	if w.cntKey > 0 {
+		w.generate()
+	}
+	w.offsets = append(w.offsets, uint32(w.buf.Len()))
+	for _, x := range w.offsets {
+		buf4 := w.buf.Allocate(4)
+		binary.LittleEndian.PutUint32(buf4, x)
+	}
+	return w.buf.WriteByte(byte(w.baseLg))
 }
 
 // ==================== Utils ====================
