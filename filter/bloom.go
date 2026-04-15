@@ -73,7 +73,7 @@ func (g *bloomFilterGenerator) Generate(b Buffer) {
 	nBytes := (nBits + 7) / 8
 	nBits = nBytes * 8 // round up to byte boundary
 
-	dest := b.Allocate(int(nBytes) + 1)
+	dest := make([]byte, int(nBytes)+1)
 	dest[nBytes] = g.k // store k in the last byte
 	for _, kh := range g.keyHashes {
 		delta := kh>>17 | kh<<15 // rotate right 17 bits
@@ -83,6 +83,7 @@ func (g *bloomFilterGenerator) Generate(b Buffer) {
 			kh += delta
 		}
 	}
+	_, _ = b.Write(dest)
 }
 
 func NewBloomFilter(n int) FilterPolicy {

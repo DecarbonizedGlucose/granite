@@ -1,6 +1,7 @@
 package sstable
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 // Writer for any type of block
 type blockWriter struct {
 	restartGap int // distance between two restart point
-	buf        util.Buffer
+	buf        bytes.Buffer
 	cntEntry   int // count of entries
 
 	psRestart []uint32 // positions of restart points
@@ -64,8 +65,11 @@ func (w *blockWriter) finish() error {
 	}
 	w.psRestart = append(w.psRestart, uint32(len(w.psRestart)))
 	for _, x := range w.psRestart {
-		buf4 := w.buf.Allocate(4)
-		binary.LittleEndian.PutUint32(buf4, x)
+		var buf4 [4]byte
+		binary.LittleEndian.PutUint32(buf4[:], x)
+		if _, err := w.buf.Write(buf4[:]); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -85,7 +89,7 @@ func (w *blockWriter) datalen() int {
 // ==================== Filter Writer ====================
 
 type filterWriter struct {
-	buf util.Buffer
+	buf bytes.Buffer
 	gen filter.FilterGenerator
 
 	cntKey  int
@@ -130,8 +134,11 @@ func (w *filterWriter) finish() error {
 	}
 	w.offsets = append(w.offsets, uint32(w.buf.Len()))
 	for _, x := range w.offsets {
-		buf4 := w.buf.Allocate(4)
-		binary.LittleEndian.PutUint32(buf4, x)
+		var buf4 [4]byte
+		binary.LittleEndian.PutUint32(buf4[:], x)
+		if _, err := w.buf.Write(buf4[:]); err != nil {
+			return err
+		}
 	}
 	return w.buf.WriteByte(byte(w.baseLg))
 }
@@ -162,7 +169,7 @@ type TableWriter struct {
 }
 
 // It will be called only after all entries are added, and the block is finished
-func (w *TableWriter) writeBlock(buf *util.Buffer, compType opt.CompressionType) (bp blockPointer, err error) {
+func (w *TableWriter) writeBlock(buf *bytes.Buffer, compType opt.CompressionType) (bp blockPointer, err error) {
 	// TODO
 	// 先进行可能的压缩，再写入，要计算checksum，最后返回block handle
 	return
@@ -361,7 +368,7 @@ func NewTableWriter(f io.Writer, o *opt.Options, pool *util.BufferPool, size int
 		blockSize:       o.GetBlockSize(),
 		comparerScratch: make([]byte, 0),
 		bpool:           pool,
-		dataBlock:       blockWriter{buf: *util.NewBuffer(bufBytes)},
+		dataBlock:       blockWriter{buf: *bytes.NewBuffer(bufBytes)},
 	}
 	// data block
 	w.dataBlock.restartGap = o.GetBlockRestartGap()

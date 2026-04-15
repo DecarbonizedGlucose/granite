@@ -22,8 +22,6 @@ type FilterGenerator interface {
 }
 
 type Buffer interface {
-	// Alloc allocates n bytes of slice from the buffer.
-	Allocate(n int) []byte
 	// Write appends data to the buffer.
 	Write(p []byte) (n int, err error)
 	// WriterByte appends a single byte to the buffer.
