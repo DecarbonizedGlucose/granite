@@ -50,6 +50,7 @@ func (p *BufferPool) Get(size int) []byte {
 		if size < cap(*b) {
 			p.cntLess.Add(1)
 			*b = (*b)[:size]
+			return *b
 		} else if size == cap(*b) {
 			p.cntEqual.Add(1)
 			*b = (*b)[:size]
@@ -62,10 +63,9 @@ func (p *BufferPool) Get(size int) []byte {
 				return *b
 			}
 			*b = make([]byte, size, p.baseline[pIdx])
+			return *b
 		}
 	}
-
-	return nil
 }
 
 // Put adds given buffer to the pool.

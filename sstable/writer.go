@@ -139,7 +139,7 @@ func (w *filterWriter) finish() error {
 // ==================== SSTable Writer ====================
 
 type TableWriter struct {
-	cmp         comparer.Comparer // key comparer and separator/successor generator
+	comparer    comparer.Comparer // key comparer and separator/successor generator
 	filter      filter.FilterPolicy
 	compression opt.CompressionType
 	blockSize   int // data block size
@@ -174,9 +174,9 @@ func (w *TableWriter) flushPendingBP(key []byte) error {
 	}
 	var sep []byte
 	if len(key) == 0 {
-		sep = w.cmp.Successor(w.comparerScratch[:0], w.dataBlock.lastKey)
+		sep = w.comparer.Successor(w.comparerScratch[:0], w.dataBlock.lastKey)
 	} else {
-		sep = w.cmp.Separator(w.comparerScratch[:0], w.dataBlock.lastKey, key)
+		sep = w.comparer.Separator(w.comparerScratch[:0], w.dataBlock.lastKey, key)
 	}
 	if sep == nil {
 		sep = w.dataBlock.lastKey
@@ -216,7 +216,7 @@ func (w *TableWriter) Append(key, value []byte) error {
 	if w.err != nil {
 		return w.err
 	}
-	if w.cntEntry > 0 && w.cmp.Compare(w.dataBlock.lastKey, key) >= 0 {
+	if w.cntEntry > 0 && w.comparer.Compare(w.dataBlock.lastKey, key) >= 0 {
 		w.err = fmt.Errorf("granite/sstable: TableWriter: keys are not in increasing order: %q, %q", w.dataBlock.lastKey, key)
 		return w.err
 	}
@@ -355,8 +355,9 @@ func NewTableWriter(f io.Writer, o *opt.Options, pool *util.BufferPool, size int
 
 	w := &TableWriter{
 		writer:          f,
-		cmp:             o.GetComparer(),
+		comparer:        o.GetComparer(),
 		filter:          o.GetFilter(),
+		compression:     o.GetCompressionType(),
 		blockSize:       o.GetBlockSize(),
 		comparerScratch: make([]byte, 0),
 		bpool:           pool,

@@ -76,6 +76,7 @@ func (m *MemTable) Reset() {
 		m.nodeData[nNext+n] = 0
 		m.prevNode[n] = 0
 	}
+	m.mu.Unlock()
 }
 
 // ==================== Num funcs ====================
@@ -254,7 +255,7 @@ func (m *MemTable) Find(key []byte) (rkey, value []byte, err error) {
 // Get gets the value for "key".
 // Return with ErrNotFound if "key" does not exist.
 func (m *MemTable) Get(key []byte) (value []byte, err error) {
-	m.mu.Lock()
+	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	node, exact := m.findGE(key, false)
@@ -288,6 +289,12 @@ func (m *MemTable) Delete(key []byte) error {
 	m.n--
 
 	return nil
+}
+
+// ==================== Iterator ====================
+
+type mIter struct {
+	m *MemTable
 }
 
 // ==================== Utils ====================

@@ -17,11 +17,12 @@ const (
 	DefaultCompression CompressionType = 0
 	NoCompression      CompressionType = 1
 	SnappyCompression  CompressionType = 2
-	OtherCompression   CompressionType = 3 // TODO
+	ZSTDCompression    CompressionType = 3
 )
 
 var (
 	DefaultBlockSize       = 4 * KiB
+	DefaultBlockRestartGap = 16
 	DefaultCompressionType = SnappyCompression
 	DefaultFilterBaseLg    = 11
 )
@@ -36,7 +37,10 @@ type Options struct {
 }
 
 func (o *Options) GetBlockRestartGap() int {
-	return 16
+	if o == nil || o.BlockRestartGap <= 0 {
+		return DefaultBlockRestartGap
+	}
+	return o.BlockRestartGap
 }
 
 func (o *Options) GetBlockSize() int {
