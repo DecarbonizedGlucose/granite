@@ -4,6 +4,12 @@ import (
 	"errors"
 )
 
+// I/O errors
 var (
 	ErrNegativeRead = errors.New("granite/util.Buffer: reader returned negative count from Read")
+)
+
+// Key-value errors
+var (
+	ErrNotFound = errors.New("granitedb: key not found")
 )
