@@ -13,3 +13,8 @@ var (
 var (
 	ErrNotFound = errors.New("granitedb: key not found")
 )
+
+// Iterator errors
+var (
+	ErrIterClosed = errors.New("granite/iterator: iterator is closed")
+)
