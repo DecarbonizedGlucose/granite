@@ -18,3 +18,8 @@ var (
 var (
 	ErrIterClosed = errors.New("granite/iterator: iterator is closed")
 )
+
+// SSTable errors
+var (
+	ErrFileBroken = errors.New("granite/sstable: broken file")
+)
