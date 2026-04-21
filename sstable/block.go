@@ -18,7 +18,7 @@ type block struct {
 }
 
 // returns (index, offset) of the most recent restart point before the key
-func (b *block) recentRestart(cmp comparer.Comparer, ristart, rilimit int, key []byte) (idx, off int, err error) {
+func (b *block) recentRestart(cmp comparer.Comparer, ristart, rilimit int, key []byte) (idx, off int) {
 	f := func(i int) bool {
 		offset := int(binary.LittleEndian.Uint32(b.data[b.restartsOffset+(ristart+i)*4:])) + 1 // +1 to skip 0x00 (shared=0)
 		keyLen, keyBytes := binary.Uvarint(b.data[offset:])
@@ -31,7 +31,7 @@ func (b *block) recentRestart(cmp comparer.Comparer, ristart, rilimit int, key [
 	return
 }
 
-// returns index of the restart point for the given offset
+// returns index of the restart point for the given offset according to the range [ristart, rilimit)
 func (b *block) getRestartIndex(ristart, rilimit int, off int) int {
 	return sort.Search(rilimit-ristart, func(i int) bool {
 		return int(binary.LittleEndian.Uint32(b.data[b.restartsOffset+(ristart+i)*4:])) > off // first > off

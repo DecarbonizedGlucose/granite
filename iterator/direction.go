@@ -1,5 +1,6 @@
 package iterator
 
+// more like some state
 type Direction int
 
 const (
@@ -11,3 +12,7 @@ const (
 	Released
 	DefaultInvalid
 )
+
+func (d Direction) Valid() bool {
+	return d == Forward || d == Backward
+}
