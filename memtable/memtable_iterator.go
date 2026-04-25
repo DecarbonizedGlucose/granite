@@ -23,7 +23,7 @@ type mtIter struct {
 func (i *mtIter) peek(checkStart, checkLimit bool) bool {
 	if i.curNodeIdx != 0 {
 		ko := i.m.nodeData[i.curNodeIdx]
-		vo := i.m.nodeData[i.curNodeIdx+nKey]
+		vo := ko + i.m.nodeData[i.curNodeIdx+nKey]
 		i.curKey = i.m.kvData[ko:vo]
 		if i.r != nil {
 			switch {
@@ -35,6 +35,7 @@ func (i *mtIter) peek(checkStart, checkLimit bool) bool {
 			}
 		}
 		i.curValue = i.m.kvData[vo : vo+i.m.nodeData[i.curNodeIdx+nVal]]
+		return true
 	}
 bail:
 	i.curKey = nil
