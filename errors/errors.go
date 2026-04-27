@@ -23,3 +23,9 @@ var (
 var (
 	ErrFileBroken = errors.New("granite/sstable: broken file")
 )
+
+// Internal Key errors
+var (
+	ErrInvalidKeyLength = errors.New("granite: invalid key length")
+	ErrInvalidKeyType   = errors.New("granite: invalid key type")
+)
