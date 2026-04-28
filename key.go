@@ -21,6 +21,12 @@ const (
 	keyMaxNum = keyMaxSeq<<8 | uint64(1)
 )
 
+var keyMaxNumBytes = func() []byte {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, keyMaxNum)
+	return buf
+}()
+
 func createInternalKey(dst, ukey []byte, seq uint64, kt keyType) internalKey {
 	if seq > keyMaxSeq {
 		panic("granite: invalid sequence number")
