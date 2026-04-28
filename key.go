@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	gerrors "github.com/DecarbonizedGlucose/granite/errors"
+	"github.com/DecarbonizedGlucose/granite/util"
 )
 
 type internalKey []byte
@@ -27,7 +28,7 @@ func createInternalKey(dst, ukey []byte, seq uint64, kt keyType) internalKey {
 		panic("granite: invalid type")
 	}
 
-	dst = ensureBuffer(dst, len(ukey)+8)
+	dst = util.EnsureBuffer(dst, len(ukey)+8)
 	copy(dst, ukey)
 	binary.LittleEndian.PutUint64(dst[len(ukey):], (seq<<8)|uint64(kt))
 	return internalKey(dst)
