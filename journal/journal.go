@@ -5,6 +5,7 @@ import (
 	"hash/crc32"
 	"io"
 
+	gerrors "github.com/DecarbonizedGlucose/granite/errors"
 	"github.com/DecarbonizedGlucose/granite/util"
 )
 
@@ -33,6 +34,16 @@ type Entry struct {
 }
 
 type Record struct {
+	entries []*Entry
+}
+
+// AddEntry appends one piece of operation entry to the record.
+// The entry should be not modified after added.
+func (r *Record) AddEntry(entry *Entry) {
+	if entry == nil {
+		return
+	}
+	r.entries = append(r.entries, entry)
 }
 
 type JourType int
@@ -47,10 +58,11 @@ type Journal struct {
 	f    io.ReadWriteCloser
 	path string
 
-	buf  []byte
-	off  int
-	t    JourType
-	size int
+	buf     []byte
+	off     int
+	t       JourType
+	lastCRC uint32
+	size    int
 
 	closed  bool
 	closeCh chan struct{}
@@ -118,16 +130,16 @@ func OpenCreate(path string) (*Journal, error) {
 	return nil, nil
 }
 
-// Append appends a batch of entries to the journal file
-func (j *Journal) Append(seq uint64, entries []Entry, s bool) (size int, err error) {
+// Append appends a record, including a batch of entries to the journal file
+func (j *Journal) Append(seq uint64, re *Record, s bool) (size int, err error) {
 	size = 0
-	for _, e := range entries {
+	for _, e := range re.entries {
 		size += 1 + 4 + len(e.Key) + 4 + len(e.Value)
 	}
 	util.EnsureBuffer(j.buf, size)
 	j.off = 0
-	for _, e := range entries {
-		j.fillEntry(&e)
+	for _, e := range re.entries {
+		j.fillEntry(e)
 	}
 	j.writeHeader(size)
 	j.writeRecord()
@@ -146,8 +158,95 @@ func OpenReplay(path string) (*Journal, error) {
 	return nil, nil
 }
 
-func (j *Journal) Replay() ([]Record, error) {
-	return nil, nil
+func (j *Journal) readHeader() int {
+	if j.err != nil {
+		return -1
+	}
+	var header [8]byte
+	_, j.err = io.ReadFull(j.f, header[:])
+	if j.err != nil {
+		return -1
+	}
+	j.lastCRC = binary.LittleEndian.Uint32(header[0:4])
+	if !j.check() {
+		j.err = gerrors.ErrFileBroken
+		return -1
+	}
+	return int(binary.LittleEndian.Uint32(header[4:8]))
+}
+
+func (j *Journal) readRecord(bodyLen int) {
+	if j.err != nil {
+		return
+	}
+	util.EnsureBuffer(j.buf, bodyLen)
+	j.buf = j.buf[:bodyLen]
+	_, j.err = io.ReadFull(j.f, j.buf)
+}
+
+func (j *Journal) check() bool {
+	if j.err != nil {
+		return false
+	}
+	h := crc32.New(crc32.MakeTable(crc32.Castagnoli))
+	h.Write(j.buf)
+	return h.Sum32() == j.lastCRC
+}
+
+func (j *Journal) takeoutEntry() (*Entry, bool) {
+	if j.err != nil || j.off >= len(j.buf) {
+		return nil, false
+	}
+	e := &Entry{}
+	e.Type = j.buf[j.off]
+	j.off++
+
+	kLen := binary.LittleEndian.Uint32(j.buf[j.off:])
+	j.off += 4
+	e.Key = make([]byte, kLen)
+	copy(e.Key, j.buf[j.off:j.off+int(kLen)])
+	j.off += int(kLen)
+
+	vLen := binary.LittleEndian.Uint32(j.buf[j.off:])
+	j.off += 4
+	e.Value = make([]byte, vLen)
+	copy(e.Value, j.buf[j.off:j.off+int(vLen)])
+	j.off += int(vLen)
+
+	return e, true
+}
+
+func (j *Journal) Replay() ([]*Record, error) {
+	var records []*Record
+	for {
+		bodyLen := j.readHeader()
+		if j.err == io.EOF {
+			j.err = nil
+			break
+		}
+		if j.err != nil || bodyLen <= 0 {
+			return nil, j.err
+		}
+		j.readRecord(bodyLen)
+		if j.err != nil {
+			return nil, j.err
+		}
+		if !j.check() {
+			j.err = nil
+			break
+		}
+		j.off = 0
+		r := &Record{}
+		for {
+			e, ok := j.takeoutEntry()
+			if !ok {
+				break
+			}
+			r.AddEntry(e)
+		}
+		records = append(records, r)
+	}
+	return records, j.err
 }
 
 // Close saves journal and closes the open file
