@@ -26,8 +26,8 @@ var (
 
 // Internal Key errors
 var (
-	ErrInvalidKeyLength = errors.New("granite: invalid key length")
-	ErrInvalidKeyType   = errors.New("granite: invalid key type")
+	ErrInvalidInternalKeyLength = errors.New("granite: invalid key length")
+	ErrInvalidInternalKeyType   = errors.New("granite: invalid key type")
 )
 
 // Journal errors

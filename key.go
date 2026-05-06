@@ -42,12 +42,12 @@ func createInternalKey(dst, ukey []byte, seq uint64, kt keyType) internalKey {
 
 func parseInteralKey(ik []byte) (ukey []byte, seq uint64, kt keyType, err error) {
 	if len(ik) < 8 {
-		return nil, 0, 0, gerrors.ErrInvalidKeyLength
+		return nil, 0, 0, gerrors.ErrInvalidInternalKeyLength
 	}
 	num := binary.LittleEndian.Uint64(ik[len(ik)-8:]) // type and seq
 	seq, kt = num>>8, keyType(num&0xff)
 	if kt > keyTypeVal {
-		return nil, 0, 0, gerrors.ErrInvalidKeyType
+		return nil, 0, 0, gerrors.ErrInvalidInternalKeyType
 	}
 	ukey = ik[:len(ik)-8]
 	return
