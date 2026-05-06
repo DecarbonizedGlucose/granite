@@ -29,3 +29,10 @@ var (
 	ErrInvalidKeyLength = errors.New("granite: invalid key length")
 	ErrInvalidKeyType   = errors.New("granite: invalid key type")
 )
+
+// Journal errors
+var (
+	ErrJournalInvalidEntryType = errors.New("granite: invalid journal entry type")
+	ErrJournalNilKey           = errors.New("granite: nil journal entry key")
+	ErrJournalNilValue         = errors.New("granite: nil journal entry value")
+)

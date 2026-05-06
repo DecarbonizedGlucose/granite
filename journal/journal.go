@@ -23,6 +23,7 @@ Record is the on-disk unit:
 [     Head(8)    ][         Body(len)        ]
 entries:
 [type(1)][keyLen(4)][key][valLen(4)][val]
+                         [ empty if del ]
 
 one seq is for one batch
 */
@@ -34,7 +35,7 @@ type Entry struct {
 }
 
 type Record struct {
-	entries []*Entry
+	Entries []*Entry
 }
 
 // AddEntry appends one piece of operation entry to the record.
@@ -43,7 +44,7 @@ func (r *Record) AddEntry(entry *Entry) {
 	if entry == nil {
 		return
 	}
-	r.entries = append(r.entries, entry)
+	r.Entries = append(r.Entries, entry)
 }
 
 type JourType int
@@ -88,25 +89,36 @@ func (j *Journal) fillEntry(e *Entry) {
 		return
 	}
 	if e.Type != EntryPut && e.Type != EntryDelete {
-		panic("granite: invalid entry type")
+		j.err = gerrors.ErrJournalInvalidEntryType
+		return
 	}
-	if e.Key == nil || e.Value == nil {
-		panic("granite: nil key or value")
+	if e.Key == nil {
+		j.err = gerrors.ErrJournalNilKey
+		return
+	}
+	if e.Type == EntryPut && e.Value == nil {
+		j.err = gerrors.ErrJournalNilValue
+		return
 	}
 	if len(e.Key) < 8 {
-		panic("granite: key too short")
+		j.err = gerrors.ErrInvalidInternalKeyLength
+		return
 	}
 
 	j.buf[j.off] = e.Type
 	j.off++
+
 	binary.LittleEndian.PutUint32(j.buf[j.off:], uint32(len(e.Key)))
 	j.off += 4
 	copy(j.buf[j.off:], e.Key)
 	j.off += len(e.Key)
-	binary.LittleEndian.PutUint32(j.buf[j.off:], uint32(len(e.Value)))
-	j.off += 4
-	copy(j.buf[j.off:], e.Value)
-	j.off += len(e.Value)
+
+	if e.Type == EntryPut {
+		binary.LittleEndian.PutUint32(j.buf[j.off:], uint32(len(e.Value)))
+		j.off += 4
+		copy(j.buf[j.off:], e.Value)
+		j.off += len(e.Value)
+	}
 }
 
 func (j *Journal) writeRecord() {
@@ -133,12 +145,12 @@ func OpenCreate(path string) (*Journal, error) {
 // Append appends a record, including a batch of entries to the journal file
 func (j *Journal) Append(seq uint64, re *Record, s bool) (size int, err error) {
 	size = 0
-	for _, e := range re.entries {
+	for _, e := range re.Entries {
 		size += 1 + 4 + len(e.Key) + 4 + len(e.Value)
 	}
 	util.EnsureBuffer(j.buf, size)
 	j.off = 0
-	for _, e := range re.entries {
+	for _, e := range re.Entries {
 		j.fillEntry(e)
 	}
 	j.writeHeader(size)
@@ -207,11 +219,13 @@ func (j *Journal) takeoutEntry() (*Entry, bool) {
 	copy(e.Key, j.buf[j.off:j.off+int(kLen)])
 	j.off += int(kLen)
 
-	vLen := binary.LittleEndian.Uint32(j.buf[j.off:])
-	j.off += 4
-	e.Value = make([]byte, vLen)
-	copy(e.Value, j.buf[j.off:j.off+int(vLen)])
-	j.off += int(vLen)
+	if e.Type == EntryPut {
+		vLen := binary.LittleEndian.Uint32(j.buf[j.off:])
+		j.off += 4
+		e.Value = make([]byte, vLen)
+		copy(e.Value, j.buf[j.off:j.off+int(vLen)])
+		j.off += int(vLen)
+	}
 
 	return e, true
 }
