@@ -5,8 +5,11 @@ import (
 )
 
 const (
-	footerLen = 48
-	magicByte = "\x11\x45\x14\x19" // temp decision
+	blockTrailerLen            = 5
+	footerLen                  = 48
+	magicByte                  = "\x11\x45\x14\x19" // temp decision
+	blockTypeNoCompression     = 0
+	blockTypeSnappyCompression = 1
 )
 
 type blockPointer struct {
