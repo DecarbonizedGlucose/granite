@@ -129,7 +129,7 @@ func (i *blockIter) Next() bool {
 	if i.offset >= i.offsetLimit {
 		i.dire = iterator.EOI
 		if i.offset > i.offsetLimit {
-			i.err = gerrors.ErrFileBroken // TODO: file would be broken, should bring more infomation
+			i.err = gerrors.ErrTableCorrupted // TODO: file would be broken, should bring more infomation
 		}
 		return false
 	}
@@ -239,7 +239,7 @@ func (i *blockIter) Prev() bool {
 		newOff += size
 		if newOff >= i.offset {
 			if newOff > i.offset {
-				i.err = gerrors.ErrFileBroken // TODO: file would be broken, should bring more infomation
+				i.err = gerrors.ErrTableCorrupted // TODO: file would be broken, should bring more infomation
 				return false
 			}
 			break

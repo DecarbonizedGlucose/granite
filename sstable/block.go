@@ -46,7 +46,7 @@ func (b *block) getRestartOffset(idx int) int {
 func (b *block) getEntry(off int) (key, value []byte, kShared, size int, err error) {
 	if off > b.restartsOffset {
 		// TODO: the file would be broken, should bring more infomation
-		err = gerrors.ErrFileBroken
+		err = gerrors.ErrTableCorrupted
 		return
 	}
 	if off == b.restartsOffset {
@@ -61,7 +61,7 @@ func (b *block) getEntry(off int) (key, value []byte, kShared, size int, err err
 	size = headerLen + int(keyLen) + int(valueLen)
 	if sharedBytes <= 0 || keyLenBytes <= 0 || valueLenBytes <= 0 || off+size > b.restartsOffset {
 		// TODO: the file would be broken, should bring more infomation
-		err = gerrors.ErrFileBroken
+		err = gerrors.ErrTableCorrupted
 		return
 	}
 

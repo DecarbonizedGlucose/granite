@@ -21,7 +21,7 @@ var (
 
 // SSTable errors
 var (
-	ErrFileBroken = errors.New("granite/sstable: broken file")
+	ErrTableCorrupted = errors.New("granite/sstable: broken sstable")
 )
 
 // Internal Key errors
