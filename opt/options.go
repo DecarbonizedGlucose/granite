@@ -77,3 +77,25 @@ func (o *Options) GetFilterBaseLg() int {
 	}
 	return o.FilterBaseLg
 }
+
+type ReadOptions struct {
+	DontFillCache bool
+}
+
+func (ro *ReadOptions) GetDontFillCache() bool {
+	if ro == nil {
+		return false
+	}
+	return ro.DontFillCache
+}
+
+type WriteOptions struct {
+	SyncEachTime bool
+}
+
+func (wo *WriteOptions) GetSyncEachTime() bool {
+	if wo == nil {
+		return false
+	}
+	return wo.SyncEachTime
+}
