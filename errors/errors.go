@@ -2,6 +2,9 @@ package errors
 
 import (
 	"errors"
+	"fmt"
+
+	"github.com/DecarbonizedGlucose/granite/util"
 )
 
 // I/O errors
@@ -23,6 +26,31 @@ var (
 var (
 	ErrTableCorrupted = errors.New("granite/sstable: broken sstable")
 )
+
+type ErrFileCorrupted struct {
+	Fd  util.FileDesc
+	Err error
+}
+
+func (e *ErrFileCorrupted) Error() string {
+	if !e.Fd.Zero() {
+		return fmt.Sprintf("%v [file=%v]", e.Err, e.Fd)
+	}
+	return e.Err.Error()
+}
+
+func NewErrFileCorrupted(fd util.FileDesc, err error) error {
+	return &ErrFileCorrupted{fd, err}
+}
+
+func IsCorrupted(err error) bool {
+	switch err.(type) {
+	case *ErrFileCorrupted:
+		return true
+	default:
+		return false
+	}
+}
 
 // Internal Key errors
 var (
