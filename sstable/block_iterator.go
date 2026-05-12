@@ -37,7 +37,23 @@ type blockIter struct {
 }
 
 func (i *blockIter) reset() {
+	if i.dire == iterator.Backward {
+		i.prevNodes = i.prevNodes[:0]
+		i.prevKeys = i.prevKeys[:0]
+	}
+	i.recentRestartIdx = i.riStart
+	i.offset = i.bsRestartOffset
+	i.dire = iterator.SOI
+	i.key = i.key[:0]
+	i.value = i.value[:0]
+}
 
+func (i *blockIter) setError(err error) {
+	i.err = err
+	i.key = nil
+	i.value = nil
+	i.prevNodes = nil
+	i.prevKeys = nil
 }
 
 func (i *blockIter) First() bool {
