@@ -1,0 +1,228 @@
+package iterator
+
+import (
+	"sync/atomic"
+
+	gerrors "github.com/DecarbonizedGlucose/granite/errors"
+)
+
+type IteratorIndexer interface {
+	CommonIterator
+
+	Get() InternalIterator
+}
+
+type indexedIterator struct {
+	index  IteratorIndexer
+	data   InternalIterator
+	err    error
+	errf   func(err error)
+	closed atomic.Bool
+}
+
+func (i *indexedIterator) setData() {
+	if i.data != nil {
+		i.data.Close()
+	}
+	i.data = i.index.Get()
+}
+
+func (i *indexedIterator) clearData() {
+	if i.data != nil {
+		i.data.Close()
+	}
+	i.data = nil
+}
+
+func (i *indexedIterator) indexErr() {
+	if err := i.index.Error(); err != nil {
+		if i.errf != nil {
+			i.errf(err)
+		}
+		i.err = err
+	}
+}
+
+func (i *indexedIterator) dataErr() bool {
+	if err := i.data.Error(); err != nil {
+		if i.errf != nil {
+			i.errf(err)
+		}
+		i.err = err
+		return true
+	}
+	return false
+}
+
+func (i *indexedIterator) Close() error {
+	if i.Closed() {
+		return gerrors.ErrClosed
+	}
+	i.clearData()
+	i.index.Close()
+	i.closed.Store(true)
+	return nil
+}
+
+func (i *indexedIterator) Closed() bool {
+	return i.closed.Load()
+}
+
+func (i *indexedIterator) Valid() bool {
+	return i.data != nil && i.data.Valid()
+}
+
+func (i *indexedIterator) First() bool {
+	if i.err != nil {
+		return false
+	} else if i.Closed() {
+		i.err = gerrors.ErrClosed
+		return false
+	}
+
+	if !i.index.First() {
+		i.indexErr()
+		i.clearData()
+		return false
+	}
+	i.setData()
+	return i.Next()
+}
+
+func (i *indexedIterator) Last() bool {
+	if i.err != nil {
+		return false
+	} else if i.Closed() {
+		i.err = gerrors.ErrClosed
+		return false
+	}
+
+	if !i.index.Last() {
+		i.indexErr()
+		i.clearData()
+		return false
+	}
+	i.setData()
+	if !i.data.Last() {
+		if i.dataErr() {
+			return false
+		}
+		i.clearData()
+		return i.Prev()
+	}
+	return true
+}
+
+func (i *indexedIterator) Seek(key []byte) bool {
+	if i.err != nil {
+		return false
+	} else if i.Closed() {
+		i.err = gerrors.ErrClosed
+		return false
+	}
+
+	if !i.index.Seek(key) {
+		i.indexErr()
+		i.clearData()
+		return false
+	}
+	i.setData()
+	if !i.data.Seek(key) {
+		if i.dataErr() {
+			return false
+		}
+		i.clearData()
+		return i.Next()
+	}
+	return true
+}
+
+func (i *indexedIterator) Next() bool {
+	if i.err != nil {
+		return false
+	} else if i.Closed() {
+		i.err = gerrors.ErrClosed
+		return false
+	}
+
+	switch {
+	case i.data != nil && !i.data.Next():
+		if i.dataErr() {
+			return false
+		}
+		i.clearData()
+		fallthrough
+	case i.data == nil:
+		if !i.index.Next() {
+			i.indexErr()
+			return false
+		}
+		i.setData()
+		return i.Next()
+	}
+	return i.Next()
+}
+
+func (i *indexedIterator) Prev() bool {
+	if i.err != nil {
+		return false
+	} else if i.Closed() {
+		i.err = gerrors.ErrClosed
+		return false
+	}
+
+	switch {
+	case i.data != nil && !i.data.Prev():
+		if i.dataErr() {
+			return false
+		}
+		i.clearData()
+		fallthrough
+	case i.data == nil:
+		if !i.index.Prev() {
+			i.indexErr()
+			return false
+		}
+		i.setData()
+		if !i.data.Last() {
+			if i.dataErr() {
+				return false
+			}
+			i.clearData()
+			return i.Prev()
+		}
+	}
+	return true
+}
+
+func (i *indexedIterator) Key() []byte {
+	if i.data == nil {
+		return nil
+	}
+	return i.data.Key()
+}
+
+func (i *indexedIterator) Value() []byte {
+	if i.data == nil {
+		return nil
+	}
+	return i.data.Value()
+}
+
+func (i *indexedIterator) Error() error {
+	if i.err != nil {
+		return i.err
+	}
+	if err := i.index.Error(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (i *indexedIterator) SetErrCallbackFunc(f func(error)) {
+	i.errf = f
+}
+
+func NewIndexedIterator(index IteratorIndexer) InternalIterator {
+	return &indexedIterator{index: index}
+}
