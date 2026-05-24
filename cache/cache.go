@@ -38,6 +38,17 @@ type Cacher interface {
 	Evict(n *Node)
 }
 
+type Stats struct {
+	Buckets     int
+	Nodes       int64
+	Size        int64
+	GrowCount   int32
+	ShrinkCount int32
+	HitCount    int64
+	MissCount   int64
+	SetCount    int64
+	DelCount    int64
+}
 
 // Cache is a 'cache map', which is a concurrent hash
 // table for mapping (ns, key) to value(cache node).
@@ -81,10 +92,268 @@ func (r *Cache) getBucket(hash uint32) (*mHead, *mBucket) {
 	return h, h.initBucket(i)
 }
 
+func (r *Cache) enumerateNodesWithCB(cb func([]*Node)) {
+	h := (*mHead)(atomic.LoadPointer(&r.mHead))
+	h.enumerateNodesWithCB(cb)
+}
+
+func (r *Cache) enumerateNodesByNS(ns uint64) []*Node {
+	h := (*mHead)(atomic.LoadPointer(&r.mHead))
+	return h.enumerateNodesByNS(ns)
+}
+
+func (r *Cache) delete(n *Node) bool {
+	for {
+		h, b := r.getBucket(n.hash)
+		done, deleted := b.delete(r, h, n.ns, n.key)
+		if done {
+			return deleted
+		}
+	}
+}
+
+// GetStats returns cache statistics.
+func (r *Cache) GetStats() Stats {
+	return Stats{
+		Buckets:     len((*mHead)(atomic.LoadPointer(&r.mHead)).buckets),
+		Nodes:       atomic.LoadInt64(&r.statNodes),
+		Size:        atomic.LoadInt64(&r.statSize),
+		GrowCount:   atomic.LoadInt32(&r.statGrow),
+		ShrinkCount: atomic.LoadInt32(&r.statShrink),
+		HitCount:    atomic.LoadInt64(&r.statHit),
+		MissCount:   atomic.LoadInt64(&r.statMiss),
+		SetCount:    atomic.LoadInt64(&r.statSet),
+		DelCount:    atomic.LoadInt64(&r.statDel),
+	}
+}
+
+func (r *Cache) Nodes() int {
+	return int(atomic.LoadInt64(&r.statNodes))
+}
+
+func (r *Cache) Size() int {
+	return int(atomic.LoadInt64(&r.statSize))
+}
+
+func (r *Cache) Cap() int {
+	if r.cacher != nil {
+		return r.cacher.Capacity()
+	}
+	return 0
+}
+
+func (r *Cache) SetCap(cap int) {
+	if r.cacher != nil {
+		r.cacher.SetCap(cap)
+	}
+}
+
+// Get returns the 'cache node' for given (ns, key). It returns
+// nil if the node does not exist or is evicted. Get will automatically
+// create the node by calling setFunc. Otherwise Get will return nil.
+//
+// The returned cache handle should be released after use.
+func (r *Cache) Get(ns, key uint64, setFunc func() (size int, value Value)) *Handle {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return nil
+	}
+
+	hash := murmur32(ns, key, 0xf00)
+	for {
+		h, b := r.getBucket(hash)
+		done, created, n := b.get(r, h, hash, ns, key, setFunc == nil)
+		if done {
+			if created || n == nil {
+				atomic.AddInt64(&r.statMiss, 1)
+			} else {
+				atomic.AddInt64(&r.statHit, 1)
+			}
+
+			if n != nil {
+				n.mu.Lock()
+				if n.value != nil {
+					if setFunc != nil {
+						n.mu.Unlock()
+						n.unRefInternal(false)
+						return nil
+					}
+
+					n.size, n.value = setFunc()
+					if n.value == nil {
+						n.size = 0
+						n.mu.Unlock()
+						n.unRefInternal(false)
+						return nil
+					}
+
+					atomic.AddInt64(&r.statSet, 1)
+					atomic.AddInt64(&r.statSize, int64(n.size))
+				}
+				n.mu.Unlock()
+				if r.cacher != nil {
+					r.cacher.Promote(n)
+				}
+				return &Handle{n: unsafe.Pointer(n)}
+			}
+
+			break
+		}
+	}
+	return nil
+}
+
+// Delete removes and ban 'cache node' for given (ns, key). A banned node will
+// never be inserted into the 'cache tree'. Ban only attibuted to the particular
+// 'cache node', so when a 'cahe node' is recreadted, it will not be banned.
+//
+// If defFunc is not nil, it will be called when the node does not exist or
+// released.
+//
+// Delete will return true if 'cache node' exists.
+func (r *Cache) Delete(ns, key uint64, defFunc func()) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return false
+	}
+
+	hash := murmur32(ns, key, 0xf00)
+	for {
+		h, b := r.getBucket(hash)
+		done, _, n := b.get(r, h, hash, ns, key, true)
+		if done {
+			if n != nil {
+				if defFunc != nil {
+					n.mu.Lock()
+					n.delFuncs = append(n.delFuncs, defFunc)
+					n.mu.Unlock()
+				}
+				if r.cacher != nil {
+					r.cacher.Ban(n)
+				}
+				n.unRefInternal(true)
+				return true
+			}
+
+			break
+		}
+	}
+
+	if defFunc != nil {
+		defFunc()
+	}
+
+	return false
+}
+
+func (r *Cache) Evict(ns, key uint64) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return false
+	}
+
+	hash := murmur32(ns, key, 0xf00)
+	for {
+		h, b := r.getBucket(hash)
+		done, _, n := b.get(r, h, hash, ns, key, true)
+		if done {
+			if n != nil {
+				if r.cacher != nil {
+					r.cacher.Evict(n)
+				}
+				n.unRefInternal(true)
+				return true
+			}
+			break
+		}
+	}
+
+	return false
+}
+
+func (r *Cache) EvictNS(ns uint64) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return
+	}
+
+	if r.cacher != nil {
+		nodes := r.enumerateNodesByNS(ns)
+		for _, n := range nodes {
+			r.cacher.Evict(n)
+		}
+	}
+}
+
+func (r *Cache) evictAll() {
+	r.enumerateNodesWithCB(func(nodes []*Node) {
+		for _, n := range nodes {
+			r.cacher.Evict(n)
+		}
+	})
+}
+
+func (r *Cache) EvictAll() {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return
+	}
+
+	if r.cacher != nil {
+		r.evictAll()
+	}
+}
+
+// Close closes the 'cache map'.
+// All 'Cache' method is no-op after 'cache map' is closed.
+// All 'cache node' will be evicted from 'cacher'.
+func (r *Cache) Close(force bool) {
+	var head *mHead
+	// hold rwlock to make sure no more in-flight operations
+	r.mu.Lock()
+	if r.closed {
+		r.closed = true
+		head = (*mHead)(atomic.LoadPointer(&r.mHead))
+		atomic.StorePointer(&r.mHead, nil)
+	}
+	r.mu.Unlock()
+
+	if head != nil {
+		head.enumerateNodesWithCB(func(nodes []*Node) {
+			for _, n := range nodes {
+				// Zeroing ref. Prevent unRefInternal to call finializer.
+				if force {
+					atomic.StoreInt32(&n.ref, 0)
+				}
+
+				// Evict node from cacher.
+				if r.cacher != nil {
+					r.cacher.Evict(n)
+				}
+
+				if force {
+					// Call finalizer directly.
+					n.callFinalizer()
+				}
+			}
+		})
+	}
+}
 
 type Value any
 
 type Node struct {
+	r         *Cache
 	hash      uint32 // hash of the key
 	ns, key   uint64 // to label the node
 	mu        sync.Mutex
@@ -93,6 +362,71 @@ type Node struct {
 	ref       int32          // reference count
 	delFuncs  []func()       // delete callback functions
 	CacheData unsafe.Pointer // pointer to lruNode
+}
+
+func (n *Node) NS() uint64 {
+	return n.ns
+}
+
+func (n *Node) Key() uint64 {
+	return n.key
+}
+
+func (n *Node) Value() Value {
+	return n.value
+}
+
+func (n *Node) Size() int {
+	return n.size
+}
+
+func (n *Node) Ref() int32 {
+	return atomic.LoadInt32(&n.ref)
+}
+
+func (n *Node) GetHandle() *Handle {
+	if atomic.AddInt32(&n.ref, 1) <= 1 {
+		panic("BUG: Node.GetHandle on zero ref")
+	}
+	return &Handle{n: unsafe.Pointer(n)}
+}
+
+func (n *Node) unRefInternal(updateStat bool) {
+	if atomic.AddInt32(&n.ref, -1) == 0 {
+		n.r.delete(n)
+		if updateStat {
+			atomic.AddInt64(&n.r.statDel, 1)
+		}
+	}
+}
+
+func (n *Node) callFinalizer() {
+	// Call releaser.
+	if n.value != nil {
+		if r, ok := n.value.(util.Releaser); ok {
+			r.Close()
+		}
+		n.value = nil
+	}
+
+	// Call delete funcs.
+	for _, f := range n.delFuncs {
+		f()
+	}
+	n.delFuncs = nil
+}
+
+func (n *Node) unRefExternal() {
+	if atomic.AddInt32(&n.ref, -1) == 0 {
+		n.r.mu.RLock()
+		if n.r.closed {
+			n.callFinalizer()
+		} else {
+			n.r.delete(n)
+			atomic.AddInt64(&n.r.statDel, 1)
+		}
+		n.r.mu.RUnlock()
+	}
 }
 
 type Handle struct {
@@ -105,6 +439,14 @@ func (h *Handle) Value() Value {
 		return n.value
 	}
 	return nil
+}
+
+func (h *Handle) Release() {
+	nPtr := atomic.LoadPointer(&h.n)
+	if nPtr != nil && atomic.CompareAndSwapPointer(&h.n, nPtr, nil) {
+		n := (*Node)(nPtr)
+		n.unRefExternal()
+	}
 }
 
 type mNodes []*Node
@@ -349,5 +691,34 @@ func (h *mHead) initBuckets() {
 		h.initBucket(uint32(i))
 	}
 	atomic.StorePointer(&h.predecessor, nil)
+}
+
+func (h *mHead) enumerateNodesWithCB(cb func([]*Node)) {
+	var nodes []*Node
+	for x := range h.buckets {
+		b := h.initBucket(uint32(x))
+		b.mu.Lock()
+		nodes = append(nodes, b.nodes...)
+		b.mu.Unlock()
+		cb(nodes)
+	}
+}
+
+func (h *mHead) enumerateNodesByNS(ns uint64) []*Node {
+	var nodes []*Node
+	for x := range h.buckets {
+		b := h.initBucket(uint32(x))
+		b.mu.Lock()
+		i := b.nodes.search(ns, 0)
+		for ; i < len(b.nodes); i++ {
+			n := b.nodes[i]
+			if n.ns != ns {
+				break
+			}
+			nodes = append(nodes, n)
+		}
+		b.mu.Unlock()
+	}
+	return nodes
 }
 
