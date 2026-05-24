@@ -181,7 +181,7 @@ func (j *Journal) readHeader() int {
 	}
 	j.lastCRC = binary.LittleEndian.Uint32(header[0:4])
 	if !j.check() {
-		j.err = gerrors.ErrFileBroken
+		j.err = gerrors.ErrTableCorrupted
 		return -1
 	}
 	return int(binary.LittleEndian.Uint32(header[4:8]))
