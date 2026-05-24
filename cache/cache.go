@@ -38,6 +38,15 @@ type Cacher interface {
 	Evict(n *Node)
 }
 
+type NamespaceGetter struct {
+	Cache *Cache
+	NS    uint64
+}
+
+func (g *NamespaceGetter) Get(key uint64, setFunc func() (size int, value Value)) *Handle {
+	return g.Cache.Get(g.NS, key, setFunc)
+}
+
 type Stats struct {
 	Buckets     int
 	Nodes       int64
