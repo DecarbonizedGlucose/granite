@@ -9,6 +9,7 @@ import (
 
 	"github.com/golang/snappy"
 
+	"github.com/DecarbonizedGlucose/granite/cache"
 	"github.com/DecarbonizedGlucose/granite/comparer"
 	gerrors "github.com/DecarbonizedGlucose/granite/errors"
 	"github.com/DecarbonizedGlucose/granite/filter"
@@ -37,11 +38,10 @@ func (e *ErrCorrupted) Error() string {
 // ==================== Table Reader ====================
 
 type TableReader struct {
-	mu     sync.RWMutex
-	fd     util.FileDesc
-	reader io.ReaderAt
-	// cache
-	// TODO: read path with cache
+	mu       sync.RWMutex
+	fd       util.FileDesc
+	reader   io.ReaderAt
+	cache    *cache.NamespaceGetter
 	comparer comparer.Comparer
 	err      error
 	bpool    *util.BufferPool
@@ -137,8 +137,37 @@ func (r *TableReader) readBlock(bp blockPointer, verifyChecksum bool) (*block, e
 }
 
 func (r *TableReader) readBlockCached(bp blockPointer, verifyChecksum, fillCache bool) (*block, error) {
-	// TODO: read path with cache
-	return nil, nil
+	if r.cache != nil {
+		var (
+			err error
+			ch  *cache.Handle
+		)
+		if fillCache {
+			ch = r.cache.Get(bp.offset, func() (size int, value cache.Value) {
+				var b *block
+				b, err = r.readBlock(bp, verifyChecksum)
+				if err != nil {
+					return 0, nil
+				}
+				return cap(b.data), b
+			})
+		} else {
+			ch = r.cache.Get(bp.offset, nil) // key: block offset
+		}
+		if ch != nil {
+			b, ok := ch.Value().(*block)
+			if !ok {
+				ch.Release()
+				return nil, errors.New("granite/sstable: inconsistent block type")
+			}
+			return b, err
+		} else if err != nil {
+			return nil, err
+		}
+	}
+
+	b, err := r.readBlock(bp, verifyChecksum)
+	return b, err
 }
 
 func (r *TableReader) readFilterBlock(bp blockPointer) (*filterBlock, error) {
@@ -166,8 +195,37 @@ func (r *TableReader) readFilterBlock(bp blockPointer) (*filterBlock, error) {
 }
 
 func (r *TableReader) readFilterBlockCached(bp blockPointer, fillCache bool) (*filterBlock, error) {
-	// TODO: read path with cache
-	return nil, nil
+	if r.cache != nil {
+		var (
+			err error
+			ch  *cache.Handle
+		)
+		if fillCache {
+			ch = r.cache.Get(bp.offset, func() (size int, value cache.Value) {
+				var fb *filterBlock
+				fb, err = r.readFilterBlock(bp)
+				if err != nil {
+					return 0, nil
+				}
+				return cap(fb.data), fb
+			})
+		} else {
+			ch = r.cache.Get(bp.offset, nil)
+		}
+		if ch != nil {
+			b, ok := ch.Value().(*filterBlock)
+			if !ok {
+				ch.Release()
+				return nil, errors.New("granite/sstable: inconsistent block type")
+			}
+			return b, err
+		} else if err != nil {
+			return nil, err
+		}
+	}
+
+	b, err := r.readFilterBlock(bp)
+	return b, err
 }
 
 func (r *TableReader) getIndexBlock(fillCache bool) (b *block, err error) {
@@ -255,9 +313,8 @@ func (r *TableReader) NewIterator(slice *util.Range, ro *opt.ReadOptions) iterat
 		return iterator.NewEmprtIterator(r.err)
 	}
 
-	// fillChche := !ro.GetDontFillCache()
-	// TODO: read path with cache
-	indexBlock, err := r.getIndexBlock(false)
+	fillCache := !ro.GetDontFillCache()
+	indexBlock, err := r.getIndexBlock(fillCache)
 	if err != nil {
 		return iterator.NewEmprtIterator(err)
 	}
@@ -279,6 +336,8 @@ func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov b
 		return
 	}
 
+	// seek in index block
+
 	indexBlock, err := r.getIndexBlock(true)
 	if err != nil {
 		return
@@ -295,11 +354,15 @@ func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov b
 		return
 	}
 
+	// decode goal: data block pointer
+
 	dataBP, n := decodeBlockPointer(index.Value())
 	if n == 0 {
 		r.err = r.newErrorCorruptedBP(r.indexBP, "bad data block pointer")
 		return nil, nil, r.err
 	}
+
+	// quick refuse by filter
 
 	if filtered && r.filter != nil {
 		filterBlock, ferr := r.getFilterBlock(true)
@@ -314,8 +377,10 @@ func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov b
 		}
 	}
 
+	// seek in data block
+
 	data := r.getDataIter(dataBP, nil, r.verifyCheksum, !ro.GetDontFillCache())
-	if !data.Seek(key) {
+	if !data.Seek(key) { // actually key is in next data block
 		data.Close()
 		if err = data.Error(); err != nil {
 			return
@@ -344,6 +409,8 @@ func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov b
 			return
 		}
 	}
+
+	// copy returns
 
 	rkey = data.Key()
 	if !nov {
@@ -434,8 +501,7 @@ func (r *TableReader) Close() {
 		r.filterBlock = nil
 	}
 	r.reader = nil
-	// r.cache = nil
-	// TODO: read path with cache
+	r.cache = nil
 	r.bpool = nil
 	r.err = ErrReaderReleased
 }
