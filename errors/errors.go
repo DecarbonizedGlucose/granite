@@ -14,7 +14,14 @@ var (
 
 // Key-value errors
 var (
-	ErrNotFound = errors.New("granitedb: key not found")
+	ErrNotFound = errors.New("granite: key not found")
+)
+
+// Storage errors
+var (
+	ErrInvalidFile = errors.New("granite/storage: invalid file")
+	ErrLocked      = errors.New("granite/storage: already locked")
+	ErrClosed      = errors.New("granite/storage: closed")
 )
 
 // Iterator errors
