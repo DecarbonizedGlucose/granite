@@ -90,7 +90,7 @@ func (r *TableReader) readRawBlock(bp blockPointer, verifyChecksum bool) ([]byte
 		n := bp.length + 1
 		checksum0 := binary.LittleEndian.Uint32(data[n:])
 		checksum1 := util.NewCRC(data[:n]).Value()
-		if checksum0 == checksum1 {
+		if checksum0 != checksum1 {
 			r.bpool.Put(data)
 			return nil, r.newErrorCorruptedBP(bp, fmt.Sprintf("checksum mismatch, want=%#x got=%#x", checksum0, checksum1))
 		}
