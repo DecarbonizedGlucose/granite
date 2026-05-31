@@ -25,15 +25,25 @@ var (
 	DefaultBlockRestartGap = 16
 	DefaultCompressionType = SnappyCompression
 	DefaultFilterBaseLg    = 11
+	DefaultWriteBufferSize = 4 * MiB
 )
 
 type Options struct {
+	AltFilters      []filter.FilterPolicy
 	BlockRestartGap int
 	BlockSize       int
 	Comparer        comparer.Comparer
 	Compression     CompressionType
 	Filter          filter.FilterPolicy
 	FilterBaseLg    int
+	WriteBufferSize int
+}
+
+func (o *Options) GetAltFilters() []filter.FilterPolicy {
+	if o == nil {
+		return nil
+	}
+	return o.AltFilters
 }
 
 func (o *Options) GetBlockRestartGap() int {
@@ -76,6 +86,13 @@ func (o *Options) GetFilterBaseLg() int {
 		return DefaultFilterBaseLg
 	}
 	return o.FilterBaseLg
+}
+
+func (o *Options) GetWriteBufferSize() int {
+	if o == nil || o.WriteBufferSize <= 0 {
+		return DefaultWriteBufferSize
+	}
+	return o.WriteBufferSize
 }
 
 type ReadOptions struct {
