@@ -1,7 +1,6 @@
 package sstable
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -18,7 +17,7 @@ import (
 // Writer for any type of block
 type blockWriter struct {
 	restartGap int // distance between two restart point
-	buf        bytes.Buffer
+	buf        util.Buffer
 	cntEntry   int // count of entries
 
 	psRestart []uint32 // positions of restart points
@@ -65,11 +64,8 @@ func (w *blockWriter) finish() error {
 	}
 	w.psRestart = append(w.psRestart, uint32(len(w.psRestart)))
 	for _, x := range w.psRestart {
-		var buf4 [4]byte
-		binary.LittleEndian.PutUint32(buf4[:], x)
-		if _, err := w.buf.Write(buf4[:]); err != nil {
-			return err
-		}
+		buf4 := w.buf.Alloc(4)
+		binary.LittleEndian.PutUint32(buf4, x)
 	}
 	return nil
 }
@@ -89,7 +85,7 @@ func (w *blockWriter) datalen() int {
 // ==================== Filter Writer ====================
 
 type filterWriter struct {
-	buf bytes.Buffer
+	buf util.Buffer
 	gen filter.FilterGenerator
 
 	cntKey  int
@@ -134,11 +130,8 @@ func (w *filterWriter) finish() error {
 	}
 	w.offsets = append(w.offsets, uint32(w.buf.Len()))
 	for _, x := range w.offsets {
-		var buf4 [4]byte
-		binary.LittleEndian.PutUint32(buf4[:], x)
-		if _, err := w.buf.Write(buf4[:]); err != nil {
-			return err
-		}
+		buf4 := w.buf.Alloc(4)
+		binary.LittleEndian.PutUint32(buf4, x)
 	}
 	return w.buf.WriteByte(byte(w.baseLg))
 }
@@ -368,7 +361,7 @@ func NewTableWriter(f io.Writer, o *opt.Options, pool *util.BufferPool, size int
 		blockSize:       o.GetBlockSize(),
 		comparerScratch: make([]byte, 0),
 		bpool:           pool,
-		dataBlock:       blockWriter{buf: *bytes.NewBuffer(bufBytes)},
+		dataBlock:       blockWriter{buf: *util.NewBuffer(bufBytes)},
 	}
 	// data block
 	w.dataBlock.restartGap = o.GetBlockRestartGap()
