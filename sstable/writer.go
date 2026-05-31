@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/golang/snappy"
+
 	"github.com/DecarbonizedGlucose/granite/comparer"
 	"github.com/DecarbonizedGlucose/granite/filter"
 	"github.com/DecarbonizedGlucose/granite/opt"
@@ -162,9 +164,36 @@ type TableWriter struct {
 }
 
 // It will be called only after all entries are added, and the block is finished
-func (w *TableWriter) writeBlock(buf *bytes.Buffer, compType opt.CompressionType) (bp blockPointer, err error) {
-	// TODO
-	// 先进行可能的压缩，再写入，要计算checksum，最后返回block handle
+func (w *TableWriter) writeBlock(buf *util.Buffer, compType opt.CompressionType) (bp blockPointer, err error) {
+	// compress the buffer if necessary
+	var b []byte
+	if compType == opt.SnappyCompression {
+		// allocate scratch enough for compression and block trailer
+		if n := snappy.MaxEncodedLen(buf.Len()) + blockTrailerLen; len(w.compressionScreatch) < n {
+			w.compressionScreatch = make([]byte, n)
+		}
+		compressed := snappy.Encode(w.compressionScreatch, buf.Bytes())
+		n := len(compressed)
+		b = compressed[:n+blockTrailerLen]
+		b[n] = blockTypeSnappyCompression
+	} else {
+		tmp := buf.Alloc(blockTrailerLen)
+		tmp[0] = blockTypeNoCompression
+		b = buf.Bytes()
+	}
+
+	// calc checksum
+	n := len(b) - 4
+	checksum := util.NewCRC(b[:n]).Value()
+	binary.LittleEndian.PutUint32(b[n:], checksum)
+
+	// write to file
+	_, err = w.writer.Write(b)
+	if err != nil {
+		return
+	}
+	bp = blockPointer{w.offset, uint64(len(b) - blockTrailerLen)}
+	w.offset += uint64(len(b))
 	return
 }
 
