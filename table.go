@@ -233,3 +233,13 @@ func (ts tFiles) getRange(c *ikComparer) (imin, imax internalKey) {
 	}
 	return
 }
+
+// Table operations
+type tOps struct {
+	s            *session
+	noSync       bool
+	evictRemoved bool
+	fileCache    *cache.Cache
+	blockCache   *cache.Cache
+	blockBuffer  *util.BufferPool
+}

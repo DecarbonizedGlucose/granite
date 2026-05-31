@@ -16,6 +16,8 @@ const (
 	keyTypeVal keyType = 1
 )
 
+const keyTypeSeek = keyTypeVal
+
 const (
 	keyMaxSeq = (uint64(1) << 56) - 1
 	keyMaxNum = keyMaxSeq<<8 | uint64(1)
