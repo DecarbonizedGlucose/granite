@@ -14,6 +14,7 @@ type IteratorIndexer interface {
 
 type indexedIterator struct {
 	index  IteratorIndexer
+	strict bool
 	data   InternalIterator
 	err    error
 	errf   func(err error)
@@ -223,6 +224,6 @@ func (i *indexedIterator) SetErrCallbackFunc(f func(error)) {
 	i.errf = f
 }
 
-func NewIndexedIterator(index IteratorIndexer) InternalIterator {
-	return &indexedIterator{index: index}
+func NewIndexedIterator(index IteratorIndexer, strict bool) InternalIterator {
+	return &indexedIterator{index: index, strict: strict}
 }

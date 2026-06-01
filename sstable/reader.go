@@ -324,7 +324,7 @@ func (r *TableReader) NewIterator(slice *util.Range, ro *opt.ReadOptions) iterat
 		slice:     slice,
 		fillCache: !ro.GetDontFillCache(),
 	}
-	return iterator.NewIndexedIterator(index)
+	return iterator.NewIndexedIterator(index, opt.GetStrict(r.o, ro, opt.StrictReader))
 }
 
 func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov bool) (rkey []byte, value []byte, err error) {

@@ -22,6 +22,22 @@ const (
 	ZSTDCompression    CompressionType = 3
 )
 
+type Strict uint // DB strict level
+
+const (
+	StrictManifest Strict = 1 << iota
+	StrictJournalChecksum
+	StrictJournal
+	StrictBlockChecksum
+	StrictCompaction
+	StrictReader
+	StrictRecovery
+	StrictOverride
+	StrictAll     = StrictManifest | StrictJournalChecksum | StrictJournal | StrictBlockChecksum | StrictCompaction | StrictReader | StrictRecovery
+	DefaultStrict = StrictJournalChecksum | StrictBlockChecksum | StrictCompaction | StrictReader
+	NoStrict      = ^StrictAll
+)
+
 var (
 	DefaultBlockSize                     = 4 * KiB
 	DefaultBlockRestartGap               = 16
@@ -70,7 +86,11 @@ type Options struct {
 	Compression                           CompressionType
 	Filter                                filter.FilterPolicy
 	FilterBaseLg                          int
-	WriteBufferSize                       int
+	// Whether the database is in read-only mode.
+	ReadOnly bool
+	// The DB strict level.
+	Strict          Strict
+	WriteBufferSize int
 }
 
 func (o *Options) GetAltFilters() []filter.FilterPolicy {
@@ -188,6 +208,20 @@ func (o *Options) GetFilterBaseLg() int {
 	return o.FilterBaseLg
 }
 
+func (o *Options) GetReadOnly() bool {
+	if o == nil {
+		return false
+	}
+	return o.ReadOnly
+}
+
+func (o *Options) GetStrict(strict Strict) bool {
+	if o == nil || o.Strict == 0 {
+		return DefaultStrict&strict != 0
+	}
+	return o.Strict&strict != 0
+}
+
 func (o *Options) GetWriteBufferSize() int {
 	if o == nil || o.WriteBufferSize <= 0 {
 		return DefaultWriteBufferSize
@@ -197,6 +231,7 @@ func (o *Options) GetWriteBufferSize() int {
 
 type ReadOptions struct {
 	DontFillCache bool
+	strict        Strict
 }
 
 func (ro *ReadOptions) GetDontFillCache() bool {
@@ -204,6 +239,13 @@ func (ro *ReadOptions) GetDontFillCache() bool {
 		return false
 	}
 	return ro.DontFillCache
+}
+
+func (ro *ReadOptions) GetStrict(strict Strict) bool {
+	if ro == nil {
+		return false
+	}
+	return ro.strict&strict != 0
 }
 
 type WriteOptions struct {
@@ -215,4 +257,11 @@ func (wo *WriteOptions) GetSyncEachTime() bool {
 		return false
 	}
 	return wo.SyncEachTime
+}
+
+func GetStrict(o *Options, ro *ReadOptions, strict Strict) bool {
+	if ro.GetStrict(StrictOverride) {
+		return ro.GetStrict(strict)
+	}
+	return o.GetStrict(strict) || ro.GetStrict(strict)
 }
