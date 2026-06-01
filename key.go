@@ -42,7 +42,7 @@ func createInternalKey(dst, ukey []byte, seq uint64, kt keyType) internalKey {
 	return internalKey(dst)
 }
 
-func parseInteralKey(ik []byte) (ukey []byte, seq uint64, kt keyType, err error) {
+func parseInternalKey(ik []byte) (ukey []byte, seq uint64, kt keyType, err error) {
 	if len(ik) < 8 {
 		return nil, 0, 0, gerrors.ErrInvalidInternalKeyLength
 	}
@@ -56,7 +56,7 @@ func parseInteralKey(ik []byte) (ukey []byte, seq uint64, kt keyType, err error)
 }
 
 func (k internalKey) valid() bool {
-	_, _, _, err := parseInteralKey(k)
+	_, _, _, err := parseInternalKey(k)
 	return err == nil
 }
 
