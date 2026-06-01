@@ -2,8 +2,6 @@ package iterator
 
 import (
 	"sync/atomic"
-
-	gerrors "github.com/DecarbonizedGlucose/granite/errors"
 )
 
 type IteratorIndexer interface {
@@ -57,7 +55,7 @@ func (i *indexedIterator) dataErr() bool {
 
 func (i *indexedIterator) Close() error {
 	if i.Closed() {
-		return gerrors.ErrClosed
+		return ErrIterClosed
 	}
 	i.clearData()
 	i.index.Close()
@@ -77,7 +75,7 @@ func (i *indexedIterator) First() bool {
 	if i.err != nil {
 		return false
 	} else if i.Closed() {
-		i.err = gerrors.ErrClosed
+		i.err = ErrIterClosed
 		return false
 	}
 
@@ -94,7 +92,7 @@ func (i *indexedIterator) Last() bool {
 	if i.err != nil {
 		return false
 	} else if i.Closed() {
-		i.err = gerrors.ErrClosed
+		i.err = ErrIterClosed
 		return false
 	}
 
@@ -118,7 +116,7 @@ func (i *indexedIterator) Seek(key []byte) bool {
 	if i.err != nil {
 		return false
 	} else if i.Closed() {
-		i.err = gerrors.ErrClosed
+		i.err = ErrIterClosed
 		return false
 	}
 
@@ -142,7 +140,7 @@ func (i *indexedIterator) Next() bool {
 	if i.err != nil {
 		return false
 	} else if i.Closed() {
-		i.err = gerrors.ErrClosed
+		i.err = ErrIterClosed
 		return false
 	}
 
@@ -168,7 +166,7 @@ func (i *indexedIterator) Prev() bool {
 	if i.err != nil {
 		return false
 	} else if i.Closed() {
-		i.err = gerrors.ErrClosed
+		i.err = ErrIterClosed
 		return false
 	}
 

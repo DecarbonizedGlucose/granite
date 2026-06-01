@@ -1,5 +1,11 @@
 package iterator
 
+import "errors"
+
+var (
+	ErrIterClosed = errors.New("granite/iterator: iterator closed")
+)
+
 type CommonIterator interface {
 	First() bool
 	Last() bool

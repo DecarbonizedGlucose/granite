@@ -7,11 +7,6 @@ import (
 	"github.com/DecarbonizedGlucose/granite/util"
 )
 
-// I/O errors
-var (
-	ErrNegativeRead = errors.New("granite/util.Buffer: reader returned negative count from Read")
-)
-
 // Key-value errors
 var (
 	ErrNotFound = errors.New("granite: key not found")
@@ -22,11 +17,6 @@ var (
 	ErrInvalidFile = errors.New("granite/storage: invalid file")
 	ErrLocked      = errors.New("granite/storage: already locked")
 	ErrClosed      = errors.New("granite/storage: closed")
-)
-
-// Iterator errors
-var (
-	ErrIterClosed = errors.New("granite/iterator: iterator is closed")
 )
 
 // SSTable errors

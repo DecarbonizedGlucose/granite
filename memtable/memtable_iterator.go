@@ -3,7 +3,6 @@ package memtable
 import (
 	"sync/atomic"
 
-	gerrors "github.com/DecarbonizedGlucose/granite/errors"
 	"github.com/DecarbonizedGlucose/granite/iterator"
 	"github.com/DecarbonizedGlucose/granite/util"
 )
@@ -46,7 +45,7 @@ bail:
 // First moves the iterator to the first key and returns true if the iterator is valid.
 func (i *mtIter) First() bool {
 	if i.Closed() {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 	i.lastDire = iterator.Forward
@@ -63,7 +62,7 @@ func (i *mtIter) First() bool {
 // Last moves the iterator to the last key and returns true if the iterator is valid.
 func (i *mtIter) Last() bool {
 	if i.Closed() {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 	i.lastDire = iterator.Backward
@@ -81,7 +80,7 @@ func (i *mtIter) Last() bool {
 // and returns true if the iterator is valid.
 func (i *mtIter) Seek(key []byte) bool {
 	if i.Closed() {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 	i.lastDire = iterator.Forward
@@ -97,7 +96,7 @@ func (i *mtIter) Seek(key []byte) bool {
 // Prev moves the iterator to the previous key and returns true if the iterator is valid.
 func (i *mtIter) Prev() bool {
 	if i.Closed() {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 	if i.curNodeIdx == 0 {
@@ -116,7 +115,7 @@ func (i *mtIter) Prev() bool {
 // Next moves the iterator to the next key and returns true if the iterator is valid.
 func (i *mtIter) Next() bool {
 	if i.Closed() {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 	if i.curNodeIdx == 0 {
@@ -157,7 +156,7 @@ func (i *mtIter) Error() error {
 // Close closes the iterator and releases any resources associated with it.
 func (i *mtIter) Close() error {
 	if i.Closed() {
-		return gerrors.ErrIterClosed
+		return iterator.ErrIterClosed
 	}
 	i.m = nil
 	i.r = nil

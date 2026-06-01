@@ -60,7 +60,7 @@ func (i *blockIter) First() bool {
 	if i.err != nil {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 
@@ -76,7 +76,7 @@ func (i *blockIter) Last() bool {
 	if i.err != nil {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 
@@ -92,7 +92,7 @@ func (i *blockIter) Seek(key []byte) bool {
 	if !i.Valid() {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 
@@ -114,7 +114,7 @@ func (i *blockIter) Next() bool {
 	if !i.Valid() {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 
@@ -172,7 +172,7 @@ func (i *blockIter) Prev() bool {
 	if !i.Valid() {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = gerrors.ErrIterClosed
+		i.err = iterator.ErrIterClosed
 		return false
 	}
 
@@ -290,7 +290,7 @@ func (i *blockIter) Error() error {
 
 func (i *blockIter) Close() error {
 	if i.Closed() {
-		return gerrors.ErrIterClosed
+		return iterator.ErrIterClosed
 		// TODO: should bring more infomation
 	}
 	// TODO: Release the block's buffer back to the pool
