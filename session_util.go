@@ -113,7 +113,7 @@ func (s *session) setCompPtr(level int, ikey internalKey) {
 	s.stCompPtrs[level] = append(internalKey{}, ikey...)
 }
 
-func (s *session) getCompPre(level int, ikey internalKey) internalKey {
+func (s *session) getCompPre(level int) internalKey {
 	if level >= len(s.stCompPtrs) {
 		return nil
 	}

@@ -30,7 +30,7 @@ func newFileLock(path string, readonly bool) (fl fileLock, err error) {
 	if err != nil {
 		return
 	}
-	err = setFileLock(f, true, readonly)
+	err = setFileLock(f, readonly, true)
 	if err != nil {
 		f.Close()
 		return
@@ -57,6 +57,9 @@ func rename(oldpath, newpath string) error {
 
 func isErrInvalid(err error) bool {
 	if err == os.ErrInvalid {
+		return true
+	}
+	if syserr, ok := err.(*os.SyscallError); ok && syserr.Err == syscall.EINVAL {
 		return true
 	}
 	if patherr, ok := err.(*os.PathError); ok && patherr.Err == syscall.EINVAL {

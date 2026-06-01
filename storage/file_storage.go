@@ -85,16 +85,16 @@ type fileStorage struct {
 }
 
 func OpenFile(path string, readonly bool) (Storage, error) {
-	if fi, err := os.Stat(path); err != nil {
+	if fi, err := os.Stat(path); err == nil {
 		if !fi.IsDir() {
 			return nil, fmt.Errorf("granite/storage: path %s is not a directory", path)
-		} else if os.IsNotExist(err) && !readonly {
-			if err := os.MkdirAll(path, 0755); err != nil {
-				return nil, err
-			}
-		} else {
+		}
+	} else if os.IsNotExist(err) && !readonly {
+		if err := os.MkdirAll(path, 0755); err != nil {
 			return nil, err
 		}
+	} else {
+		return nil, err
 	}
 
 	flock, err := newFileLock(filepath.Join(path, "LOCK"), readonly)
@@ -222,7 +222,7 @@ func (fs *fileStorage) Log(str string) {
 }
 
 func (fs *fileStorage) setMeta(fd util.FileDesc) error {
-	content := fsGenName(fd)
+	content := fsGenName(fd) + "\n"
 	// check and backup old CURRENT file
 	currentPath := filepath.Join(fs.path, "CURRENT")
 	if _, err := os.Stat(currentPath); err == nil {
@@ -267,6 +267,9 @@ func (fs *fileStorage) SetMeta(fd util.FileDesc) error {
 	if fs.readonly {
 		return errReadonly
 	}
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	if fs.open < 0 {
 		return gerrors.ErrClosed
 	}
@@ -397,7 +400,7 @@ func (fs *fileStorage) GetMeta() (util.FileDesc, error) {
 		if !fs.readonly && (curCur.name != "CURRENT" || len(pendNames) != 0) {
 			// ignore setmeta errors, however don't delete obsolute files if we
 			// catch error
-			if err := fs.setMeta(curCur.fd); err != nil {
+			if err := fs.setMeta(curCur.fd); err == nil {
 				// remove 'pening rename' files
 				for _, name := range pendNames {
 					if err := os.Remove(filepath.Join(fs.path, name)); err != nil {
@@ -429,10 +432,10 @@ func (fs *fileStorage) List(ft util.FileType) (fds []util.FileDesc, err error) {
 	}
 	names, err := dir.Readdirnames(0)
 	// close the dir first before checking for Readdirnames error
-	if cerr := dir.Close(); err == nil {
+	if cerr := dir.Close(); cerr != nil {
 		fs.log(fmt.Sprintf("close dir: %v", cerr))
 	}
-	if err != nil {
+	if err == nil {
 		for _, name := range names {
 			if fd, ok := fsParseName(name); ok && (fd.Type&ft) != 0 {
 				fds = append(fds, fd)
@@ -506,7 +509,7 @@ func (fs *fileStorage) Remove(fd util.FileDesc) error {
 		return gerrors.ErrClosed
 	}
 	err := os.Remove(filepath.Join(fs.path, fsGenName(fd)))
-	if err != nil && fsHasOldName(fd) && os.IsNotExist(err) {
+	if err != nil {
 		if fsHasOldName(fd) && os.IsNotExist(err) {
 			if e1 := os.Remove(filepath.Join(fs.path, fsGenOldName(fd))); !os.IsNotExist(e1) {
 				fs.log(fmt.Sprintf("remove %s: %v (old name)", fd, err))
@@ -629,7 +632,7 @@ func fsParseName(name string) (fd util.FileDesc, ok bool) {
 		switch tail {
 		case "log":
 			fd.Type = util.TypeJournal
-		case "ldb":
+		case "ldb", "sst":
 			fd.Type = util.TypeSSTable
 		case "tmp":
 			fd.Type = util.TypeTemp
