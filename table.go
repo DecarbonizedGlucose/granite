@@ -2,9 +2,15 @@ package granite
 
 import (
 	"bytes"
+	"fmt"
 	"sort"
 	"sync/atomic"
 
+	"github.com/DecarbonizedGlucose/granite/cache"
+	"github.com/DecarbonizedGlucose/granite/iterator"
+	"github.com/DecarbonizedGlucose/granite/opt"
+	"github.com/DecarbonizedGlucose/granite/sstable"
+	"github.com/DecarbonizedGlucose/granite/storage"
 	"github.com/DecarbonizedGlucose/granite/util"
 )
 
@@ -77,6 +83,33 @@ func (ts tFiles) lessByKey(c *ikComparer, i, j int) bool {
 // Return true if i's number > j's number.
 func (ts tFiles) lessByNum(i, j int) bool {
 	return ts[i].fd.Num > ts[j].fd.Num
+}
+
+// Helper type for sortByKey.
+type tFilesSortByKey struct {
+	tFiles
+	ikc *ikComparer
+}
+
+func (x *tFilesSortByKey) Less(i, j int) bool {
+	return x.lessByKey(x.ikc, i, j)
+}
+
+func (ts tFiles) sortByKey(c *ikComparer) {
+	sort.Sort(&tFilesSortByKey{tFiles: ts, ikc: c})
+}
+
+// Helper type for sortByNum.
+type tFilesSortByNum struct {
+	tFiles
+}
+
+func (x *tFilesSortByNum) Less(i, j int) bool {
+	return x.lessByNum(i, j)
+}
+
+func (ts tFiles) sortByNum() {
+	sort.Sort(&tFilesSortByNum{tFiles: ts})
 }
 
 // Returns sum of all file sizes in the list.
@@ -234,6 +267,126 @@ func (ts tFiles) getRange(c *ikComparer) (imin, imax internalKey) {
 	return
 }
 
+func (ts tFiles) newIndexIterator(tops *tOps, ikc *ikComparer, slice *util.Range, ro *opt.ReadOptions) iterator.IteratorIndexer {
+	if slice != nil {
+		var start, limit int
+		if slice.Start != nil {
+			start = ts.searchMax(ikc, internalKey(slice.Start))
+		}
+		if slice.Limit != nil {
+			limit = ts.searchMin(ikc, internalKey(slice.Limit))
+		} else {
+			limit = ts.Len()
+		}
+		ts = ts[start:limit]
+	}
+	return iterator.NewArrayIndexer(&tFilesArrayIndexer{
+		tFiles: ts,
+		tops:   tops,
+		ikc:    ikc,
+		slice:  slice,
+		ro:     ro,
+	})
+}
+
+// Tables interator index
+type tFilesArrayIndexer struct {
+	tFiles
+	tops  *tOps
+	ikc   *ikComparer
+	slice *util.Range
+	ro    *opt.ReadOptions
+}
+
+func (a *tFilesArrayIndexer) Search(key []byte) int {
+	return a.searchMax(a.ikc, internalKey(key))
+}
+
+func (a *tFilesArrayIndexer) Get(i int) iterator.InternalIterator {
+	if i == 0 || i == a.Len()-1 {
+		return a.tops.newIterator(a.tFiles[i], a.slice, a.ro)
+	}
+	return a.tops.newIterator(a.tFiles[i], nil, a.ro)
+}
+
+// tWriter wraps table writer, keeps track of fd and added key range
+type tWriter struct {
+	t *tOps
+
+	fd util.FileDesc
+	w  storage.Writer
+	tw *sstable.TableWriter
+
+	first, last []byte
+}
+
+// Append k/v pair to the table
+func (w *tWriter) append(key, value []byte) error {
+	if w.first == nil {
+		w.first = append([]byte(nil), key...)
+	}
+	w.last = append(w.last[:0], key...)
+	return w.tw.Append(key, value)
+}
+
+// Returns true if the table is empty.
+func (w *tWriter) empty() bool {
+	return w.first == nil
+}
+
+// Close the storage.Writer
+func (w *tWriter) close() error {
+	if w.w == nil {
+		return nil
+	}
+	if err := w.w.Close(); err != nil {
+		return err
+	}
+	w.w = nil
+	return nil
+}
+
+// Finalize the table and returns table file
+func (w *tWriter) finish() (f *tFile, err error) {
+	defer func() {
+		if cerr := w.close(); cerr != nil {
+			if err == nil {
+				err = cerr
+			} else {
+				err = fmt.Errorf("error opening file (%v); error unlocking file (%v)", err, cerr)
+			}
+		}
+	}()
+
+	err = w.tw.Close()
+	if err != nil {
+		return
+	}
+	if !w.t.noSync {
+		err = w.w.Sync()
+		if err != nil {
+			return
+		}
+	}
+	f = newTableFile(w.fd, int64(w.tw.BytesLen()), internalKey(w.first), internalKey(w.last))
+	return
+}
+
+// Drop the table
+func (w *tWriter) drop() error {
+	if err := w.close(); err != nil {
+		return err
+	}
+	w.tw = nil
+	w.first = nil
+	w.last = nil
+	if err := w.t.s.stor.Remove(w.fd); err != nil {
+		return err
+	}
+	w.t.s.reuseFileNum(w.fd.Num)
+	return nil
+}
+
 // Table operations
 type tOps struct {
 	s            *session
@@ -242,4 +395,176 @@ type tOps struct {
 	fileCache    *cache.Cache
 	blockCache   *cache.Cache
 	blockBuffer  *util.BufferPool
+}
+
+// creates an empty table and returns table writer
+func (t *tOps) create(tSize int) (*tWriter, error) {
+	fd := util.FileDesc{Type: util.TypeSSTable, Num: t.s.allocFileNum()}
+	fw, err := t.s.stor.Create(fd)
+	if err != nil {
+		return nil, err
+	}
+	return &tWriter{
+		t:  t,
+		fd: fd,
+		w:  fw,
+		tw: sstable.NewTableWriter(fw, t.s.o.Options, t.blockBuffer, tSize),
+	}, nil
+}
+
+// builds a table from the given iterator
+func (t *tOps) createFrom(src iterator.InternalIterator) (f *tFile, n int, err error) {
+	w, err := t.create(0)
+	if err != nil {
+		return
+	}
+
+	defer func() {
+		if err != nil {
+			if derr := w.drop(); derr != nil {
+				err = fmt.Errorf("error createFrom (%v); error dropping (%v)", err, derr)
+			}
+		}
+	}()
+
+	for src.Next() {
+		err = w.append(src.Key(), src.Value())
+		if err != nil {
+			return
+		}
+	}
+	err = src.Error()
+	if err != nil {
+		return
+	}
+
+	n = w.tw.EntriesLen()
+	f, err = w.finish()
+	return
+}
+
+// opens a table and returns a cache handle, which
+// should be released after use
+func (t *tOps) open(f *tFile) (ch *cache.Handle, err error) {
+	ch = t.fileCache.Get(0, uint64(f.fd.Num), func() (size int, value cache.Value) {
+		var r storage.Reader
+		r, err = t.s.stor.Open(f.fd)
+		if err != nil {
+			return 0, nil
+		}
+
+		var blockCache *cache.NamespaceGetter
+		if t.blockCache != nil {
+			blockCache = &cache.NamespaceGetter{Cache: t.blockCache, NS: uint64(f.fd.Num)}
+		}
+
+		var tr *sstable.TableReader
+		tr, err = sstable.NewReader(r, f.size, f.fd, blockCache, t.blockBuffer, t.s.o.Options)
+		if err != nil {
+			_ = r.Close()
+			return 0, nil
+		}
+		return 1, tr
+	})
+	if ch == nil && err == nil {
+		err = ErrClosed
+	}
+	return
+}
+
+// finds k/v pair whose key is >= given key
+func (t *tOps) find(f *tFile, key []byte, ro *opt.ReadOptions) (rk, rv []byte, err error) {
+	ch, err := t.open(f)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer ch.Release()
+	return ch.Value().(*sstable.TableReader).Find(key, true, ro)
+}
+
+// finds key that is >= given key
+func (t *tOps) findKey(f *tFile, key []byte, ro *opt.ReadOptions) (rk []byte, err error) {
+	ch, err := t.open(f)
+	if err != nil {
+		return nil, err
+	}
+	defer ch.Release()
+	return ch.Value().(*sstable.TableReader).FindKey(key, true, ro)
+}
+
+// returns approximate offset of given key
+func (t *tOps) offsetOf(f *tFile, key []byte) (off int64, err error) {
+	ch, err := t.open(f)
+	if err != nil {
+		return
+	}
+	defer ch.Release()
+	return ch.Value().(*sstable.TableReader).OffsetOf(key)
+}
+
+// create an iterator for given table
+func (t *tOps) newIterator(f *tFile, slice *util.Range, ro *opt.ReadOptions) iterator.InternalIterator {
+	ch, err := t.open(f)
+	if err != nil {
+		return iterator.NewEmptyIterator(err)
+	}
+	iter := ch.Value().(*sstable.TableReader).NewIterator(slice, ro)
+	iter.SetReleaser(ch)
+	return iter
+}
+
+// Removes table from persistence storage.
+// It waits until no one use the table.
+func (t *tOps) remove(fd util.FileDesc) {
+	t.fileCache.Delete(0, uint64(fd.Num), func() {
+		if err := t.s.stor.Remove(fd); err != nil {
+			t.s.logf("table@remove removing @%d %q", fd.Num, err)
+		} else {
+			t.s.logf("table@remove removed @%d", fd.Num)
+		}
+		if t.evictRemoved && t.blockCache != nil {
+			t.blockCache.EvictNS(uint64(fd.Num))
+		}
+		// try to reuse the file num, useful for discarded transaction
+		t.s.reuseFileNum(fd.Num)
+	})
+}
+
+// Close the table ops instance. It will close all
+// tables, regardless still used or not.
+func (t *tOps) close() {
+	t.fileCache.Close(true)
+	if t.blockCache != nil {
+		t.blockCache.Close(false)
+	}
+}
+
+// Creates new initialized table ops instance.
+func newTableOps(s *session) *tOps {
+	var (
+		fileCacher  cache.Cacher
+		blockCache  *cache.Cache
+		blockBuffer *util.BufferPool
+	)
+	if s.o.GetOpenFilesCacheCapacity() > 0 {
+		fileCacher = s.o.GetOpenFilesCacher().New(s.o.GetOpenFilesCacheCapacity())
+	}
+	if !s.o.GetDisableBlockCache() {
+		var blockCacher cache.Cacher
+		if s.o.GetBlockCacheCapacity() > 0 {
+			blockCacher = s.o.GetBlockCacher().New(s.o.GetBlockCacheCapacity())
+		}
+		blockCache = cache.NewCache(blockCacher)
+	}
+	if !s.o.GetDisableBufferPool() {
+		blockBuffer = util.NewBufferPool(s.o.GetBlockSize() + 5)
+	}
+	return &tOps{
+		s:            s,
+		noSync:       s.o.GetNoSync(),
+		evictRemoved: s.o.GetBlockCacheEvictRemoved(),
+		fileCache:    cache.NewCache(fileCacher),
+		blockCache:   blockCache,
+		blockBuffer:  blockBuffer,
+	}
 }
