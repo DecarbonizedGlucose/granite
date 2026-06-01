@@ -60,6 +60,7 @@ func (r *lru) SetCap(cap int) {
 			panic("BUG: invalid LRU used for capacity counter")
 		}
 		rn.remove()
+		rn.n.CacheData = nil
 		r.used -= rn.n.Size()
 		evicted = append(evicted, rn)
 	}
@@ -135,6 +136,7 @@ func (r *lru) Evict(n *Node) {
 	}
 	rn.remove()
 	r.used -= rn.n.Size()
+	n.CacheData = nil
 	r.mu.Unlock()
 
 	rn.h.Release()

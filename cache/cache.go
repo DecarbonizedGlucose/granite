@@ -86,7 +86,7 @@ func NewCache(cacher Cacher) *Cache {
 		shrinkThreshold: 0,
 	}
 	for i := range h.buckets {
-		h.buckets[i].state = bucketUninitialized
+		h.buckets[i].state = bucketInitialized
 	}
 	r := &Cache{
 		mHead:  unsafe.Pointer(h),
@@ -183,8 +183,8 @@ func (r *Cache) Get(ns, key uint64, setFunc func() (size int, value Value)) *Han
 
 			if n != nil {
 				n.mu.Lock()
-				if n.value != nil {
-					if setFunc != nil {
+				if n.value == nil {
+					if setFunc == nil {
 						n.mu.Unlock()
 						n.unRefInternal(false)
 						return nil
@@ -330,7 +330,7 @@ func (r *Cache) Close(force bool) {
 	var head *mHead
 	// hold rwlock to make sure no more in-flight operations
 	r.mu.Lock()
-	if r.closed {
+	if !r.closed {
 		r.closed = true
 		head = (*mHead)(atomic.LoadPointer(&r.mHead))
 		atomic.StorePointer(&r.mHead, nil)
@@ -512,6 +512,7 @@ func (b *mBucket) get(r *Cache, h *mHead, hash uint32, ns, key uint64, getOnly b
 	b.mu.Lock()
 
 	if b.frozen() {
+		b.mu.Unlock()
 		return
 	}
 
@@ -529,7 +530,7 @@ func (b *mBucket) get(r *Cache, h *mHead, hash uint32, ns, key uint64, getOnly b
 	// Get only
 	if getOnly {
 		b.mu.Unlock()
-		return false, false, nil
+		return true, false, nil
 	}
 
 	// create a new node
@@ -552,8 +553,8 @@ func (b *mBucket) get(r *Cache, h *mHead, hash uint32, ns, key uint64, getOnly b
 
 	// update counter
 	grow := atomic.AddInt64(&r.statNodes, 1) >= h.growThreshold
-	if bLen > mOverflowGrowThreshold {
-		grow = grow || atomic.AddInt32(&h.overflow, 1) >= mOverflowThreshold
+	if bLen > mOverflowThreshold {
+		grow = grow || atomic.AddInt32(&h.overflow, 1) >= mOverflowGrowThreshold
 	}
 
 	// grow
@@ -563,8 +564,8 @@ func (b *mBucket) get(r *Cache, h *mHead, hash uint32, ns, key uint64, getOnly b
 			buckets:         make([]mBucket, nhLen),
 			mask:            uint32(nhLen - 1),
 			predecessor:     unsafe.Pointer(h),
-			growThreshold:   int64(nhLen * mOverflowThreshold / 100),
-			shrinkThreshold: int64(bLen * mOverflowThreshold / 100),
+			growThreshold:   int64(nhLen * mOverflowThreshold),
+			shrinkThreshold: int64(nhLen >> 1),
 		}
 		ok := atomic.CompareAndSwapPointer(&r.mHead, unsafe.Pointer(h), unsafe.Pointer(nh))
 		if !ok {
@@ -581,6 +582,7 @@ func (b *mBucket) delete(r *Cache, h *mHead, ns, key uint64) (done bool, deleted
 	b.mu.Lock()
 
 	if b.frozen() {
+		b.mu.Unlock()
 		return
 	}
 
@@ -610,6 +612,7 @@ func (b *mBucket) delete(r *Cache, h *mHead, ns, key uint64) (done bool, deleted
 			bLen = len(b.nodes)
 		}
 	}
+	b.mu.Unlock()
 
 	if deleted {
 		// call delete funcs
@@ -619,7 +622,7 @@ func (b *mBucket) delete(r *Cache, h *mHead, ns, key uint64) (done bool, deleted
 
 		atomic.AddInt64(&r.statSize, int64(n.size)*-1)
 		shrink := atomic.AddInt64(&r.statNodes, -1) < h.shrinkThreshold
-		if bLen < mOverflowThreshold {
+		if bLen >= mOverflowThreshold {
 			atomic.AddInt32(&h.overflow, -1)
 		}
 
