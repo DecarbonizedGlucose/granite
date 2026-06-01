@@ -3,6 +3,7 @@ package opt
 import (
 	"math"
 
+	"github.com/DecarbonizedGlucose/granite/cache"
 	"github.com/DecarbonizedGlucose/granite/comparer"
 	"github.com/DecarbonizedGlucose/granite/filter"
 )
@@ -39,6 +40,8 @@ const (
 )
 
 var (
+	DefaultBlockCacher                   = LRUCacher
+	DefaultBlockCacheCapacity            = 8 * MiB
 	DefaultBlockSize                     = 4 * KiB
 	DefaultBlockRestartGap               = 16
 	DefaultCompactionExpandLimitFactor   = 25
@@ -50,14 +53,64 @@ var (
 	DefaultCompactionTotalSizeMultiplier = 10.0
 	DefaultCompressionType               = SnappyCompression
 	DefaultFilterBaseLg                  = 11
+	DefaultOpenFilesCacher               = LRUCacher
+	DefaultOpenFilesCacheCapacity        = 4 * MiB
 	DefaultWriteBufferSize               = 4 * MiB
+)
+
+type Cacher interface {
+	New(capacity int) cache.Cacher
+}
+
+type cacherFunc struct {
+	NewFunc func(capacity int) cache.Cacher
+}
+
+func (f *cacherFunc) New(capacity int) cache.Cacher {
+	if f != nil && f.NewFunc != nil {
+		return f.NewFunc(capacity)
+	}
+	return nil
+}
+
+func CacherFunc(f func(capacity int) cache.Cacher) Cacher {
+	return &cacherFunc{NewFunc: f}
+}
+
+type passthroughCacher struct {
+	Cacher cache.Cacher
+}
+
+func (p *passthroughCacher) New(capacity int) cache.Cacher {
+	return p.Cacher
+}
+
+func PassthroughCacher(c cache.Cacher) Cacher {
+	return &passthroughCacher{Cacher: c}
+}
+
+// NewLRU creates LRU 'passthrough cacher'
+func NewLRU(capacity int) Cacher {
+	return PassthroughCacher(cache.NewLRU(capacity))
+}
+
+var (
+	LRUCacher = CacherFunc(cache.NewLRU)
+	NoCacher  = CacherFunc(nil)
 )
 
 type Options struct {
 	// AltFilters defines one or more 'alternative filters'.
-	AltFilters      []filter.FilterPolicy
-	BlockRestartGap int
-	BlockSize       int
+	AltFilters []filter.FilterPolicy
+	// BlockCacher provides cache algorithm for 'sorted table' blocks caching.
+	BlockCacher Cacher
+	// BlockRestartGap is the capacity of the 'sorted table' block caching.
+	BlockCacheCapacity int
+	// BlockCacheEvictRemoved wllows enable forced-eviction on cached block
+	// belonging to removed 'sorted table'.
+	BlockCacheEvictRemoved bool
+	BlockRestartGap        int
+	BlockSize              int
 	// CompactionExpandLimitFactor limits compaction size after expanded.
 	CompactionExpandLimitFactor int
 	// CompactionGPOverlapsFactor limits overlaps in grandparent (Level + 2) that a
@@ -84,8 +137,12 @@ type Options struct {
 	CompactionTotalSizeMultiplierPerLevel []float64
 	Comparer                              comparer.Comparer
 	Compression                           CompressionType
-	Filter                                filter.FilterPolicy
-	FilterBaseLg                          int
+	// allows disable use of cache.Cache for 'sorted table' blocks
+	DisableBlockCache bool
+	// OpenFilesCacher provides cache algorithm for open files caching.
+	OpenFilesCacher Cacher
+	// OpenFilesCacheCapacity is the capacity for open files caching.
+	OpenFilesCacheCapacity int
 	// Whether the database is in read-only mode.
 	ReadOnly bool
 	// The DB strict level.
@@ -98,6 +155,29 @@ func (o *Options) GetAltFilters() []filter.FilterPolicy {
 		return nil
 	}
 	return o.AltFilters
+}
+
+func (o *Options) GetBlockCacher() Cacher {
+	if o == nil || o.BlockCacher == nil {
+		return DefaultBlockCacher
+	}
+	return o.BlockCacher
+}
+
+func (o *Options) GetBlockCacheCapacity() int {
+	if o == nil || o.BlockCacheCapacity == 0 {
+		return DefaultBlockCacheCapacity
+	} else if o.BlockCacheCapacity < 0 {
+		return 0
+	}
+	return o.BlockCacheCapacity
+}
+
+func (o *Options) GetBlockCacheEvictRemoved() bool {
+	if o == nil {
+		return false
+	}
+	return o.BlockCacheEvictRemoved
 }
 
 func (o *Options) GetBlockRestartGap() int {
@@ -194,6 +274,13 @@ func (o *Options) GetCompressionType() CompressionType {
 	return o.Compression
 }
 
+func (o *Options) GetDisableBlockCache() bool {
+	if o == nil {
+		return false
+	}
+	return o.DisableBlockCache
+}
+
 func (o *Options) GetFilter() filter.FilterPolicy {
 	if o == nil || o.Filter == nil {
 		return nil
@@ -206,6 +293,22 @@ func (o *Options) GetFilterBaseLg() int {
 		return DefaultFilterBaseLg
 	}
 	return o.FilterBaseLg
+}
+
+func (o *Options) GetOpenFilesCacher() Cacher {
+	if o == nil || o.OpenFilesCacher == nil {
+		return DefaultOpenFilesCacher
+	}
+	return o.OpenFilesCacher
+}
+
+func (o *Options) GetOpenFilesCacheCapacity() int {
+	if o == nil || o.OpenFilesCacheCapacity == 0 {
+		return DefaultOpenFilesCacheCapacity
+	} else if o.OpenFilesCacheCapacity < 0 {
+		return 0
+	}
+	return o.OpenFilesCacheCapacity
 }
 
 func (o *Options) GetReadOnly() bool {
