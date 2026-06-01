@@ -413,7 +413,7 @@ func (n *Node) callFinalizer() {
 	// Call releaser.
 	if n.value != nil {
 		if r, ok := n.value.(util.Releaser); ok {
-			r.Close()
+			r.Release()
 		}
 		n.value = nil
 	}
@@ -600,7 +600,7 @@ func (b *mBucket) delete(r *Cache, h *mHead, ns, key uint64) (done bool, deleted
 			if n.value != nil {
 				// call releaser
 				if r, ok := n.value.(util.Releaser); ok {
-					r.Close()
+					r.Release()
 				}
 				n.value = nil
 			}

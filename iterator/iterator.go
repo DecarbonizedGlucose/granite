@@ -1,12 +1,19 @@
 package iterator
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/DecarbonizedGlucose/granite/util"
+)
 
 var (
-	ErrIterClosed = errors.New("granite/iterator: iterator closed")
+	ErrIterReleased = errors.New("granite/iterator: iterator released")
 )
 
 type CommonIterator interface {
+	util.Releaser
+	util.ReleaseSetter
+
 	First() bool
 	Last() bool
 	Seek([]byte) bool
@@ -15,8 +22,6 @@ type CommonIterator interface {
 
 	Valid() bool
 	Error() error
-	Close() error
-	Closed() bool
 }
 
 type InternalIterator interface {
@@ -27,8 +32,8 @@ type InternalIterator interface {
 }
 
 type emptyIterator struct {
-	err    error
-	closed bool
+	util.BasicReleaser
+	err error
 }
 
 func (*emptyIterator) Valid() bool        { return false }
@@ -40,8 +45,6 @@ func (i *emptyIterator) Prev() bool       { return false }
 func (*emptyIterator) Key() []byte        { return nil }
 func (*emptyIterator) Value() []byte      { return nil }
 func (i *emptyIterator) Error() error     { return i.err }
-func (i *emptyIterator) Close() error     { return i.err }
-func (i *emptyIterator) Closed() bool     { return i.closed }
 
 func NewEmptyIterator(err error) InternalIterator {
 	return &emptyIterator{err: err}

@@ -1,13 +1,15 @@
 package sstable
 
 import (
-	"sync/atomic"
-
 	gerrors "github.com/DecarbonizedGlucose/granite/errors"
 	"github.com/DecarbonizedGlucose/granite/iterator"
+	"github.com/DecarbonizedGlucose/granite/util"
 )
 
 type blockIter struct {
+	blockReleaser util.Releaser
+	releaser      util.Releaser
+
 	b      *block
 	reader *TableReader
 
@@ -32,8 +34,7 @@ type blockIter struct {
 	offsetLimit     int // first entry that can not be shown
 	offsetStart     int // first entry that can be shown in range
 
-	closed atomic.Bool
-	err    error
+	err error
 }
 
 func (i *blockIter) reset() {
@@ -60,7 +61,7 @@ func (i *blockIter) First() bool {
 	if i.err != nil {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = iterator.ErrIterClosed
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 
@@ -76,7 +77,7 @@ func (i *blockIter) Last() bool {
 	if i.err != nil {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = iterator.ErrIterClosed
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 
@@ -92,7 +93,7 @@ func (i *blockIter) Seek(key []byte) bool {
 	if !i.Valid() {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = iterator.ErrIterClosed
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 
@@ -114,7 +115,7 @@ func (i *blockIter) Next() bool {
 	if !i.Valid() {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = iterator.ErrIterClosed
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 
@@ -172,7 +173,7 @@ func (i *blockIter) Prev() bool {
 	if !i.Valid() {
 		return false
 	} else if i.dire == iterator.Released {
-		i.err = iterator.ErrIterClosed
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 
@@ -288,18 +289,24 @@ func (i *blockIter) Error() error {
 	return i.err
 }
 
-func (i *blockIter) Close() error {
-	if i.Closed() {
-		return iterator.ErrIterClosed
-		// TODO: should bring more infomation
+func (i *blockIter) Release() {
+	if i.dire != iterator.Released {
+		i.reader = nil
+		i.b = nil
+		i.prevNodes = nil
+		i.prevKeys = nil
+		i.key = nil
+		i.value = nil
+		i.dire = iterator.Released
+		if i.blockReleaser != nil {
+			i.blockReleaser.Release()
+			i.blockReleaser = nil
+		}
+		if i.releaser != nil {
+			i.releaser.Release()
+			i.releaser = nil
+		}
 	}
-	// TODO: Release the block's buffer back to the pool
-	i.closed.Store(true)
-	return nil
-}
-
-func (i *blockIter) Closed() bool {
-	return i.closed.Load()
 }
 
 func (i *blockIter) isAtFirst() bool {
@@ -308,4 +315,14 @@ func (i *blockIter) isAtFirst() bool {
 
 func (i *blockIter) isAtLast() bool {
 	return false
+}
+
+func (i *blockIter) SetReleaser(releaser util.Releaser) {
+	if i.dire == iterator.Released {
+		panic(util.ErrReleased)
+	}
+	if i.releaser != nil && releaser != nil {
+		panic(util.ErrHasReleaser)
+	}
+	i.releaser = releaser
 }

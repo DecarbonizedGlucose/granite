@@ -1,9 +1,7 @@
 package iterator
 
 import (
-	"sync/atomic"
-
-	gerrors "github.com/DecarbonizedGlucose/granite/errors"
+	"github.com/DecarbonizedGlucose/granite/util"
 )
 
 type BasicArray interface {
@@ -27,15 +25,15 @@ type ArrayIndexer interface {
 }
 
 type basicArrayIterator struct {
-	array  BasicArray
-	pos    int
-	err    error
-	closed atomic.Bool
+	util.BasicReleaser
+	array BasicArray
+	pos   int
+	err   error
 }
 
 func (i *basicArrayIterator) First() bool {
-	if i.Closed() {
-		i.err = ErrIterClosed
+	if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 
@@ -48,8 +46,8 @@ func (i *basicArrayIterator) First() bool {
 }
 
 func (i *basicArrayIterator) Last() bool {
-	if i.Closed() {
-		i.err = ErrIterClosed
+	if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 
@@ -63,8 +61,8 @@ func (i *basicArrayIterator) Last() bool {
 }
 
 func (i *basicArrayIterator) Seek(key []byte) bool {
-	if i.Closed() {
-		i.err = ErrIterClosed
+	if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 
@@ -78,8 +76,8 @@ func (i *basicArrayIterator) Seek(key []byte) bool {
 }
 
 func (i *basicArrayIterator) Next() bool {
-	if i.Closed() {
-		i.err = ErrIterClosed
+	if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 
@@ -92,8 +90,8 @@ func (i *basicArrayIterator) Next() bool {
 }
 
 func (i *basicArrayIterator) Prev() bool {
-	if i.Closed() {
-		i.err = ErrIterClosed
+	if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 
@@ -106,23 +104,11 @@ func (i *basicArrayIterator) Prev() bool {
 }
 
 func (i *basicArrayIterator) Valid() bool {
-	return i.pos >= 0 && i.pos < i.array.Len() && !i.Closed()
+	return i.pos >= 0 && i.pos < i.array.Len() && !i.Released()
 }
 
 func (i *basicArrayIterator) Error() error {
 	return i.err
-}
-
-func (i *basicArrayIterator) Close() error {
-	if i.closed.Load() {
-		return gerrors.ErrClosed
-	}
-	i.closed.Store(true)
-	return nil
-}
-
-func (i *basicArrayIterator) Closed() bool {
-	return i.closed.Load()
 }
 
 type arrayIterator struct {

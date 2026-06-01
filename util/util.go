@@ -1,12 +1,55 @@
 package util
 
+import (
+	"errors"
+)
+
+var (
+	ErrReleased    = errors.New("granite: resource already released")
+	ErrHasReleaser = errors.New("granite: releaser already defined")
+)
+
 type Releaser interface {
-	Close()
+	Release()
+}
+
+type ReleaseSetter interface {
+	SetReleaser(Releaser)
+}
+
+type BasicReleaser struct {
+	releaser Releaser
+	released bool
+}
+
+func (r *BasicReleaser) Released() bool {
+	return r.released
+}
+
+func (r *BasicReleaser) SetReleaser(releaser Releaser) {
+	if r.released {
+		panic(ErrReleased)
+	}
+	if r.releaser != nil && releaser != nil {
+		panic(ErrHasReleaser)
+	}
+	r.releaser = releaser
+}
+
+func (r *BasicReleaser) Release() {
+	if r.released {
+		return
+	}
+	if r.releaser != nil {
+		r.releaser.Release()
+		r.releaser = nil
+	}
+	r.released = true
 }
 
 type NoopReleaser struct{}
 
-func (NoopReleaser) Close() {}
+func (NoopReleaser) Release() {}
 
 func EnsureBuffer(buf []byte, c int) []byte {
 	if cap(buf) < c {

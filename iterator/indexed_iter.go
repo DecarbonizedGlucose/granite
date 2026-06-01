@@ -1,7 +1,7 @@
 package iterator
 
 import (
-	"sync/atomic"
+	"github.com/DecarbonizedGlucose/granite/util"
 )
 
 type IteratorIndexer interface {
@@ -11,24 +11,24 @@ type IteratorIndexer interface {
 }
 
 type indexedIterator struct {
+	util.BasicReleaser
 	index  IteratorIndexer
 	strict bool
 	data   InternalIterator
 	err    error
 	errf   func(err error)
-	closed atomic.Bool
 }
 
 func (i *indexedIterator) setData() {
 	if i.data != nil {
-		i.data.Close()
+		i.data.Release()
 	}
 	i.data = i.index.Get()
 }
 
 func (i *indexedIterator) clearData() {
 	if i.data != nil {
-		i.data.Close()
+		i.data.Release()
 	}
 	i.data = nil
 }
@@ -53,18 +53,10 @@ func (i *indexedIterator) dataErr() bool {
 	return false
 }
 
-func (i *indexedIterator) Close() error {
-	if i.Closed() {
-		return ErrIterClosed
-	}
+func (i *indexedIterator) Close() {
 	i.clearData()
-	i.index.Close()
-	i.closed.Store(true)
-	return nil
-}
-
-func (i *indexedIterator) Closed() bool {
-	return i.closed.Load()
+	i.index.Release()
+	i.BasicReleaser.Release()
 }
 
 func (i *indexedIterator) Valid() bool {
@@ -74,8 +66,8 @@ func (i *indexedIterator) Valid() bool {
 func (i *indexedIterator) First() bool {
 	if i.err != nil {
 		return false
-	} else if i.Closed() {
-		i.err = ErrIterClosed
+	} else if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 
@@ -91,8 +83,8 @@ func (i *indexedIterator) First() bool {
 func (i *indexedIterator) Last() bool {
 	if i.err != nil {
 		return false
-	} else if i.Closed() {
-		i.err = ErrIterClosed
+	} else if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 
@@ -115,8 +107,8 @@ func (i *indexedIterator) Last() bool {
 func (i *indexedIterator) Seek(key []byte) bool {
 	if i.err != nil {
 		return false
-	} else if i.Closed() {
-		i.err = ErrIterClosed
+	} else if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 
@@ -139,8 +131,8 @@ func (i *indexedIterator) Seek(key []byte) bool {
 func (i *indexedIterator) Next() bool {
 	if i.err != nil {
 		return false
-	} else if i.Closed() {
-		i.err = ErrIterClosed
+	} else if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 
@@ -165,8 +157,8 @@ func (i *indexedIterator) Next() bool {
 func (i *indexedIterator) Prev() bool {
 	if i.err != nil {
 		return false
-	} else if i.Closed() {
-		i.err = ErrIterClosed
+	} else if i.Released() {
+		i.err = ErrIterReleased
 		return false
 	}
 

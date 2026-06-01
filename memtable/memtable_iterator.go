@@ -1,8 +1,6 @@
 package memtable
 
 import (
-	"sync/atomic"
-
 	"github.com/DecarbonizedGlucose/granite/iterator"
 	"github.com/DecarbonizedGlucose/granite/util"
 )
@@ -10,12 +8,12 @@ import (
 type direction bool
 
 type mtIter struct {
+	util.BasicReleaser
 	m                *MemTable
 	r                *util.Range
 	curNodeIdx       int
 	lastDire         iterator.Direction
 	curKey, curValue []byte
-	closed           atomic.Bool
 	err              error
 }
 
@@ -44,8 +42,8 @@ bail:
 
 // First moves the iterator to the first key and returns true if the iterator is valid.
 func (i *mtIter) First() bool {
-	if i.Closed() {
-		i.err = iterator.ErrIterClosed
+	if i.Released() {
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 	i.lastDire = iterator.Forward
@@ -61,8 +59,8 @@ func (i *mtIter) First() bool {
 
 // Last moves the iterator to the last key and returns true if the iterator is valid.
 func (i *mtIter) Last() bool {
-	if i.Closed() {
-		i.err = iterator.ErrIterClosed
+	if i.Released() {
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 	i.lastDire = iterator.Backward
@@ -79,8 +77,8 @@ func (i *mtIter) Last() bool {
 // Seek moves the iterator to the first key that is >= `key`
 // and returns true if the iterator is valid.
 func (i *mtIter) Seek(key []byte) bool {
-	if i.Closed() {
-		i.err = iterator.ErrIterClosed
+	if i.Released() {
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 	i.lastDire = iterator.Forward
@@ -95,8 +93,8 @@ func (i *mtIter) Seek(key []byte) bool {
 
 // Prev moves the iterator to the previous key and returns true if the iterator is valid.
 func (i *mtIter) Prev() bool {
-	if i.Closed() {
-		i.err = iterator.ErrIterClosed
+	if i.Released() {
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 	if i.curNodeIdx == 0 {
@@ -114,8 +112,8 @@ func (i *mtIter) Prev() bool {
 
 // Next moves the iterator to the next key and returns true if the iterator is valid.
 func (i *mtIter) Next() bool {
-	if i.Closed() {
-		i.err = iterator.ErrIterClosed
+	if i.Released() {
+		i.err = iterator.ErrIterReleased
 		return false
 	}
 	if i.curNodeIdx == 0 {
@@ -145,7 +143,7 @@ func (i *mtIter) Value() []byte {
 
 // Valid returns true if the iterator is valid.
 func (i *mtIter) Valid() bool {
-	return !i.Closed() && i.curNodeIdx != 0
+	return !i.Released() && i.curNodeIdx != 0
 }
 
 // Error returns the error of the iterator, if any.
@@ -154,21 +152,14 @@ func (i *mtIter) Error() error {
 }
 
 // Close closes the iterator and releases any resources associated with it.
-func (i *mtIter) Close() error {
-	if i.Closed() {
-		return iterator.ErrIterClosed
+func (i *mtIter) Close() {
+	if i.Released() {
+		return
 	}
 	i.m = nil
 	i.r = nil
 	i.curKey = nil
 	i.curValue = nil
-	i.closed.Store(true)
-	return nil
-}
-
-// Closed returns true if the iterator is closed.
-func (i *mtIter) Closed() bool {
-	return i.closed.Load()
 }
 
 func NewMTIter() iterator.InternalIterator {
