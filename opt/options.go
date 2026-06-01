@@ -334,7 +334,7 @@ func (o *Options) GetWriteBufferSize() int {
 
 type ReadOptions struct {
 	DontFillCache bool
-	strict        Strict
+	Strict        Strict
 }
 
 func (ro *ReadOptions) GetDontFillCache() bool {
@@ -348,7 +348,7 @@ func (ro *ReadOptions) GetStrict(strict Strict) bool {
 	if ro == nil {
 		return false
 	}
-	return ro.strict&strict != 0
+	return ro.Strict&strict != 0
 }
 
 type WriteOptions struct {

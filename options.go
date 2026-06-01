@@ -27,7 +27,14 @@ func (s *session) setOptions(o *opt.Options) {
 	}
 	// comparer
 	s.ikc = &ikComparer{no.GetComparer()}
+	no.Comparer = s.ikc
+	// Filter
+	if filter := o.GetFilter(); filter != nil {
+		no.Filter = &iFilter{filter}
+	}
 
+	s.o = &cachedOptions{Options: no}
+	s.o.cache()
 }
 
 const optCachedLevel = 7
