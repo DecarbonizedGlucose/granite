@@ -1,7 +1,6 @@
 package sstable
 
 import (
-	gerrors "github.com/DecarbonizedGlucose/granite/errors"
 	"github.com/DecarbonizedGlucose/granite/iterator"
 	"github.com/DecarbonizedGlucose/granite/util"
 )
@@ -90,21 +89,21 @@ func (i *blockIter) Last() bool {
 }
 
 func (i *blockIter) Seek(key []byte) bool {
-	if !i.Valid() {
+	if i.err != nil {
 		return false
 	} else if i.dire == iterator.Released {
 		i.err = iterator.ErrIterReleased
 		return false
 	}
 
-	newRestartIdx, newOff := i.b.recentRestart(i.reader.comparer, i.riStart, i.riLimit, key)
+	newRestartIdx, newOff := i.b.recentRestart(i.reader.cmp, i.riStart, i.riLimit, key)
 	i.recentRestartIdx = newRestartIdx
 	i.offset = max(newOff, i.bsRestartOffset)
 	if i.dire == iterator.SOI || i.dire == iterator.EOI {
 		i.dire = iterator.Forward
 	}
 	for i.Next() {
-		if i.reader.comparer.Compare(i.key, key) >= 0 {
+		if i.reader.cmp.Compare(i.key, key) >= 0 {
 			return true
 		}
 	}
@@ -112,7 +111,7 @@ func (i *blockIter) Seek(key []byte) bool {
 }
 
 func (i *blockIter) Next() bool {
-	if !i.Valid() {
+	if i.dire == iterator.EOI || i.err != nil {
 		return false
 	} else if i.dire == iterator.Released {
 		i.err = iterator.ErrIterReleased
@@ -131,7 +130,7 @@ func (i *blockIter) Next() bool {
 	for i.offset < i.offsetStart {
 		key, value, kShared, size, err := i.b.getEntry(i.offset)
 		if err != nil {
-			i.err = err // TODO: file would be broken
+			i.setError(i.reader.fixErrorCorruptedBP(i.b.bp, err))
 			return false
 		}
 		if size == 0 {
@@ -146,14 +145,14 @@ func (i *blockIter) Next() bool {
 	if i.offset >= i.offsetLimit {
 		i.dire = iterator.EOI
 		if i.offset > i.offsetLimit {
-			i.err = gerrors.ErrTableCorrupted // TODO: file would be broken, should bring more infomation
+			i.setError(i.reader.newErrorCorruptedBP(i.b.bp, "entries offset not aligned"))
 		}
 		return false
 	}
 	// decode the entry at offset
 	key, value, kShared, size, err := i.b.getEntry(i.offset)
 	if err != nil {
-		i.err = err // TODO: file would be broken
+		i.setError(i.reader.fixErrorCorruptedBP(i.b.bp, err))
 		return false
 	}
 	if size == 0 {
@@ -170,7 +169,7 @@ func (i *blockIter) Next() bool {
 }
 
 func (i *blockIter) Prev() bool {
-	if !i.Valid() {
+	if i.dire == iterator.EOI || i.err != nil {
 		return false
 	} else if i.dire == iterator.Released {
 		i.err = iterator.ErrIterReleased
@@ -215,6 +214,7 @@ func (i *blockIter) Prev() bool {
 		// get key
 		ko := node[0]
 		i.key = append(i.key[:0], i.prevKeys[ko:]...)
+		i.prevKeys = i.prevKeys[:ko]
 		// get value
 		vo := node[1]
 		vl := node[2]
@@ -236,9 +236,9 @@ func (i *blockIter) Prev() bool {
 	}
 	i.prevNodes = append(i.prevNodes, newOff)
 	for {
-		key, value, kShared, size, err := i.b.getEntry(i.offset)
+		key, value, kShared, size, err := i.b.getEntry(newOff)
 		if err != nil {
-			i.err = err // TODO: file would be broken
+			i.setError(i.reader.fixErrorCorruptedBP(i.b.bp, err))
 			return false
 		}
 		if newOff >= i.offsetStart {
@@ -255,8 +255,8 @@ func (i *blockIter) Prev() bool {
 		i.key = append(i.key[:kShared], key...)
 		newOff += size
 		if newOff >= i.offset {
-			if newOff > i.offset {
-				i.err = gerrors.ErrTableCorrupted // TODO: file would be broken, should bring more infomation
+			if newOff != i.offset {
+				i.setError(i.reader.newErrorCorruptedBP(i.b.bp, "entries offset not aligned"))
 				return false
 			}
 			break
@@ -310,10 +310,20 @@ func (i *blockIter) Release() {
 }
 
 func (i *blockIter) isAtFirst() bool {
+	switch i.dire {
+	case iterator.Forward:
+		return i.prevOffset == i.offsetStart
+	case iterator.Backward:
+		return len(i.prevNodes) == 1 && i.recentRestartIdx == i.riStart
+	}
 	return false
 }
 
 func (i *blockIter) isAtLast() bool {
+	switch i.dire {
+	case iterator.Forward, iterator.Backward:
+		return i.offset == i.offsetLimit
+	}
 	return false
 }
 

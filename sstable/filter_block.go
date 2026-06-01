@@ -31,7 +31,7 @@ func (b *filterBlock) contains(filter filter.FilterPolicy, offset uint64, key []
 	return true
 }
 
-func (b *filterBlock) Close() {
+func (b *filterBlock) Release() {
 	b.bpool.Put(b.data)
 	b.bpool = nil
 	b.data = nil

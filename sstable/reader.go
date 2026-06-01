@@ -39,13 +39,12 @@ func (e *ErrCorrupted) Error() string {
 // ==================== Table Reader ====================
 
 type TableReader struct {
-	mu       sync.RWMutex
-	fd       util.FileDesc
-	reader   io.ReaderAt
-	cache    *cache.NamespaceGetter
-	comparer comparer.Comparer
-	err      error
-	bpool    *util.BufferPool
+	mu     sync.RWMutex
+	fd     util.FileDesc
+	reader io.ReaderAt
+	cache  *cache.NamespaceGetter
+	err    error
+	bpool  *util.BufferPool
 
 	// Options
 	o             *opt.Options
@@ -79,6 +78,16 @@ func (r *TableReader) newErrorCorrupted(pos, size int64, kind, reason string) er
 
 func (r *TableReader) newErrorCorruptedBP(bp blockPointer, reason string) error {
 	return r.newErrorCorrupted(int64(bp.offset), int64(bp.length), r.blockKind(bp), reason)
+}
+
+func (r *TableReader) fixErrorCorruptedBP(bp blockPointer, err error) error {
+	if cerr, ok := err.(*ErrCorrupted); ok {
+		cerr.Pos = int64(bp.offset)
+		cerr.Size = int64(bp.length)
+		cerr.Kind = r.blockKind(bp)
+		return &gerrors.ErrFileCorrupted{Fd: r.fd, Err: cerr}
+	}
+	return err
 }
 
 func (r *TableReader) readRawBlock(bp blockPointer, verifyChecksum bool) ([]byte, error) {
@@ -137,7 +146,7 @@ func (r *TableReader) readBlock(bp blockPointer, verifyChecksum bool) (*block, e
 	return b, nil
 }
 
-func (r *TableReader) readBlockCached(bp blockPointer, verifyChecksum, fillCache bool) (*block, error) {
+func (r *TableReader) readBlockCached(bp blockPointer, verifyChecksum, fillCache bool) (*block, util.Releaser, error) {
 	if r.cache != nil {
 		var (
 			err error
@@ -159,16 +168,16 @@ func (r *TableReader) readBlockCached(bp blockPointer, verifyChecksum, fillCache
 			b, ok := ch.Value().(*block)
 			if !ok {
 				ch.Release()
-				return nil, errors.New("granite/sstable: inconsistent block type")
+				return nil, nil, errors.New("granite/sstable: inconsistent block type")
 			}
-			return b, err
+			return b, ch, err
 		} else if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	b, err := r.readBlock(bp, verifyChecksum)
-	return b, err
+	return b, b, err
 }
 
 func (r *TableReader) readFilterBlock(bp blockPointer) (*filterBlock, error) {
@@ -195,7 +204,7 @@ func (r *TableReader) readFilterBlock(bp blockPointer) (*filterBlock, error) {
 	return b, nil
 }
 
-func (r *TableReader) readFilterBlockCached(bp blockPointer, fillCache bool) (*filterBlock, error) {
+func (r *TableReader) readFilterBlockCached(bp blockPointer, fillCache bool) (*filterBlock, util.Releaser, error) {
 	if r.cache != nil {
 		var (
 			err error
@@ -217,36 +226,37 @@ func (r *TableReader) readFilterBlockCached(bp blockPointer, fillCache bool) (*f
 			b, ok := ch.Value().(*filterBlock)
 			if !ok {
 				ch.Release()
-				return nil, errors.New("granite/sstable: inconsistent block type")
+				return nil, nil, errors.New("granite/sstable: inconsistent block type")
 			}
-			return b, err
+			return b, ch, err
 		} else if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	b, err := r.readFilterBlock(bp)
-	return b, err
+	return b, b, err
 }
 
-func (r *TableReader) getIndexBlock(fillCache bool) (b *block, err error) {
+func (r *TableReader) getIndexBlock(fillCache bool) (*block, util.Releaser, error) {
 	if r.indexBlock == nil {
 		return r.readBlockCached(r.indexBP, true, fillCache)
 	}
-	return r.indexBlock, nil
+	return r.indexBlock, util.NoopReleaser{}, nil
 }
 
-func (r *TableReader) getFilterBlock(fillCache bool) (*filterBlock, error) {
+func (r *TableReader) getFilterBlock(fillCache bool) (*filterBlock, util.Releaser, error) {
 	if r.filterBlock == nil {
 		return r.readFilterBlockCached(r.filterBP, fillCache)
 	}
-	return r.filterBlock, nil
+	return r.filterBlock, util.NoopReleaser{}, nil
 }
 
-func (r *TableReader) newBlockIter(b *block, slice *util.Range, inclLimit bool) *blockIter {
+func (r *TableReader) newBlockIter(b *block, bReleaser util.Releaser, slice *util.Range, inclLimit bool) *blockIter {
 	bi := &blockIter{
-		reader: r,
-		b:      b,
+		reader:        r,
+		b:             b,
+		blockReleaser: bReleaser,
 
 		key:             make([]byte, 0),
 		dire:            iterator.SOI,
@@ -285,11 +295,11 @@ func (r *TableReader) newBlockIter(b *block, slice *util.Range, inclLimit bool) 
 }
 
 func (r *TableReader) getDataIter(dataBP blockPointer, slice *util.Range, verifyChecksum, fillCahce bool) iterator.InternalIterator {
-	b, err := r.readBlockCached(dataBP, verifyChecksum, fillCahce)
+	b, rel, err := r.readBlockCached(dataBP, verifyChecksum, fillCahce)
 	if err != nil {
 		return iterator.NewEmptyIterator(err)
 	}
-	return r.newBlockIter(b, slice, false)
+	return r.newBlockIter(b, rel, slice, false)
 }
 
 func (r *TableReader) getDataIterErr(dataBP blockPointer, slice *util.Range, verifyChecksum, fillCahce bool) iterator.InternalIterator {
@@ -315,12 +325,12 @@ func (r *TableReader) NewIterator(slice *util.Range, ro *opt.ReadOptions) iterat
 	}
 
 	fillCache := !ro.GetDontFillCache()
-	indexBlock, err := r.getIndexBlock(fillCache)
+	indexBlock, rel, err := r.getIndexBlock(fillCache)
 	if err != nil {
 		return iterator.NewEmptyIterator(err)
 	}
 	index := &indexIter{
-		blockIter: r.newBlockIter(indexBlock, slice, true),
+		blockIter: r.newBlockIter(indexBlock, rel, slice, true),
 		r:         r,
 		slice:     slice,
 		fillCache: !ro.GetDontFillCache(),
@@ -339,17 +349,17 @@ func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov b
 
 	// seek in index block
 
-	indexBlock, err := r.getIndexBlock(true)
+	indexBlock, rel, err := r.getIndexBlock(true)
 	if err != nil {
 		return
 	}
-	defer indexBlock.Close()
+	defer rel.Release()
 
-	index := r.newBlockIter(indexBlock, nil, true)
-	defer index.Close()
+	index := r.newBlockIter(indexBlock, nil, nil, true)
+	defer index.Release()
 
 	if !index.Seek(key) {
-		if err = index.Error(); err != nil {
+		if err = index.Error(); err == nil {
 			err = ErrNotFound
 		}
 		return
@@ -366,13 +376,13 @@ func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov b
 	// quick refuse by filter
 
 	if filtered && r.filter != nil {
-		filterBlock, ferr := r.getFilterBlock(true)
-		if ferr != nil {
+		filterBlock, frel, ferr := r.getFilterBlock(true)
+		if ferr == nil {
 			if !filterBlock.contains(r.filter, dataBP.offset, key) {
-				filterBlock.Close()
-				return nil, nil, ferr
+				frel.Release()
+				return nil, nil, ErrNotFound
 			}
-			filterBlock.Close()
+			frel.Release()
 		} else if !gerrors.IsCorrupted(ferr) {
 			return nil, nil, ferr
 		}
@@ -382,7 +392,7 @@ func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov b
 
 	data := r.getDataIter(dataBP, nil, r.verifyCheksum, !ro.GetDontFillCache())
 	if !data.Seek(key) { // actually key is in next data block
-		data.Close()
+		data.Release()
 		if err = data.Error(); err != nil {
 			return
 		}
@@ -403,7 +413,7 @@ func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov b
 
 		data = r.getDataIter(dataBP, nil, r.verifyCheksum, !ro.GetDontFillCache())
 		if !data.Next() {
-			data.Close()
+			data.Release()
 			if err = data.Error(); err == nil {
 				err = ErrNotFound
 			}
@@ -421,7 +431,7 @@ func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov b
 			value = append([]byte(nil), data.Value()...)
 		}
 	}
-	data.Close()
+	data.Release()
 
 	return
 }
@@ -468,14 +478,14 @@ func (r *TableReader) OffsetOf(key []byte) (off int64, err error) {
 		return
 	}
 
-	indexBlock, err := r.readBlockCached(r.indexBP, true, true)
+	indexBlock, rel, err := r.readBlockCached(r.indexBP, true, true)
 	if err != nil {
 		return
 	}
-	defer indexBlock.Close()
+	defer rel.Release()
 
-	index := r.newBlockIter(indexBlock, nil, true)
-	defer index.Close()
+	index := r.newBlockIter(indexBlock, nil, nil, true)
+	defer index.Release()
 
 	if index.Seek(key) {
 		dataBP, n := decodeBlockPointer(index.Value())
@@ -503,11 +513,11 @@ func (r *TableReader) Close() {
 		closer.Close()
 	}
 	if r.indexBlock != nil {
-		r.indexBlock.Close()
+		r.indexBlock.Release()
 		r.indexBlock = nil
 	}
 	if r.filterBlock != nil {
-		r.filterBlock.Close()
+		r.filterBlock.Release()
 		r.filterBlock = nil
 	}
 	r.reader = nil
@@ -579,7 +589,7 @@ func NewReader(f io.ReaderAt, size int64, fd util.FileDesc, cache *cache.Namespa
 	r.dataEndPos = int64(r.metaBP.offset)
 
 	// Read metaindex
-	metaIter := r.newBlockIter(metaBlock, nil, true)
+	metaIter := r.newBlockIter(metaBlock, nil, nil, true)
 	for metaIter.Next() {
 		key := string(metaIter.Key())
 		if !strings.HasPrefix(key, "filter.") {
@@ -607,8 +617,8 @@ func NewReader(f io.ReaderAt, size int64, fd util.FileDesc, cache *cache.Namespa
 			break
 		}
 	}
-	metaIter.Close()
-	metaBlock.Close()
+	metaIter.Release()
+	metaBlock.Release()
 
 	// Cache index and filter block locally, since we do not have global cache.
 	if cache == nil {
@@ -623,13 +633,10 @@ func NewReader(f io.ReaderAt, size int64, fd util.FileDesc, cache *cache.Namespa
 		if r.filter != nil {
 			r.filterBlock, err = r.readFilterBlock(r.filterBP)
 			if err != nil {
-				r.filterBlock, err = r.readFilterBlock(r.filterBP)
-				if err != nil {
-					if !gerrors.IsCorrupted(err) {
-						return nil, err
-					}
-					r.filter = nil
+				if !gerrors.IsCorrupted(err) {
+					return nil, err
 				}
+				r.filter = nil
 			}
 		}
 	}
@@ -657,7 +664,7 @@ func (i *indexIter) Get() iterator.InternalIterator {
 	}
 
 	var slice *util.Range
-	if i.slice != nil && (i.blockIter.isAtLast()) {
+	if i.slice != nil && (i.blockIter.isAtFirst() || i.blockIter.isAtLast()) {
 		slice = i.slice
 	}
 	return i.r.getDataIterErr(dataBP, slice, i.r.verifyCheksum, i.fillCache)

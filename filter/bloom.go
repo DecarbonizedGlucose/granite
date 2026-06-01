@@ -17,7 +17,7 @@ func (bloomFilter) Name() string {
 
 func (f bloomFilter) MayContain(filter, key []byte) bool {
 	nBytes := len(filter) - 1
-	if nBytes == 0 {
+	if nBytes < 1 {
 		return false
 	}
 	nBits := uint32(nBytes * 8)
@@ -83,6 +83,7 @@ func (g *bloomFilterGenerator) Generate(b Buffer) {
 			kh += delta
 		}
 	}
+	g.keyHashes = g.keyHashes[:0]
 	_, _ = b.Write(dest)
 }
 

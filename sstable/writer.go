@@ -252,11 +252,11 @@ func (w *TableWriter) Append(key, value []byte) error {
 
 	if err := w.flushPendingBP(key); err != nil {
 		// cannot flush last block pointer
-		return w.err
+		return err
 	}
 	// Append key/valur pair to data block
 	if err := w.dataBlock.appendKV(key, value); err != nil {
-		return w.err
+		return err
 	}
 	// Add key to filter block
 	w.filterBlock.add(key)
@@ -275,7 +275,7 @@ func (w *TableWriter) Append(key, value []byte) error {
 // BlocksLen returns the number of blocks written so far in the table.
 func (w *TableWriter) BlocksLen() int {
 	n := w.indexBlock.cntEntry
-	if w.dataBlock.cntEntry > 0 {
+	if w.pendingBP.length > 0 {
 		n++
 	}
 	return n
@@ -297,7 +297,10 @@ func (w *TableWriter) BytesLen() int {
 // BlocksLen, EntriesLen, BytesLen is still valid after Close.
 func (w *TableWriter) Close() error {
 	defer func() {
-
+		if w.bpool != nil {
+			w.dataBlock.buf.Reset()
+			w.bpool.Put(w.dataBlock.buf.Bytes())
+		}
 	}()
 
 	if w.err != nil {
@@ -331,7 +334,7 @@ func (w *TableWriter) Close() error {
 	if filterBP.length > 0 {
 		key := []byte("filter." + w.filter.Name())
 		n := encodeBlockPointer(w.scratch[:20], filterBP)
-		if err := w.indexBlock.appendKV(key, w.scratch[:n]); err != nil {
+		if err := w.dataBlock.appendKV(key, w.scratch[:n]); err != nil {
 			return err
 		}
 	}

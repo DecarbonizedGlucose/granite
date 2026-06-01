@@ -5,7 +5,6 @@ import (
 	"sort"
 
 	"github.com/DecarbonizedGlucose/granite/comparer"
-	gerrors "github.com/DecarbonizedGlucose/granite/errors"
 	"github.com/DecarbonizedGlucose/granite/util"
 )
 
@@ -19,15 +18,18 @@ type block struct {
 
 // returns (index, offset) of the most recent restart point before the key
 func (b *block) recentRestart(cmp comparer.Comparer, ristart, rilimit int, key []byte) (idx, off int) {
-	f := func(i int) bool {
-		offset := int(binary.LittleEndian.Uint32(b.data[b.restartsOffset+(ristart+i)*4:])) + 1 // +1 to skip 0x00 (shared=0)
-		keyLen, keyBytes := binary.Uvarint(b.data[offset:])
-		_, valueBytes := binary.Uvarint(b.data[offset+keyBytes:])
-		m := keyBytes + valueBytes
-		return cmp.Compare(b.data[m:m+int(keyLen)], key) > 0 // first to > key
+	idx = sort.Search(b.restartsLen-ristart-(b.restartsLen-rilimit), func(i int) bool {
+		offset := int(binary.LittleEndian.Uint32(b.data[b.restartsOffset+4*(ristart+i):]))
+		offset++                                    // shared always zero, since this is a restart point
+		v1, n1 := binary.Uvarint(b.data[offset:])   // key length
+		_, n2 := binary.Uvarint(b.data[offset+n1:]) // value length
+		m := offset + n1 + n2
+		return cmp.Compare(b.data[m:m+int(v1)], key) > 0
+	}) + ristart - 1
+	if idx < ristart {
+		idx = ristart
 	}
-	idx = max(sort.Search(rilimit-ristart, f)+ristart-1, ristart) // and -1 for < key
-	off = int(binary.LittleEndian.Uint32(b.data[b.restartsOffset+idx*4:]))
+	off = int(binary.LittleEndian.Uint32(b.data[b.restartsOffset+4*idx:]))
 	return
 }
 
@@ -45,8 +47,7 @@ func (b *block) getRestartOffset(idx int) int {
 
 func (b *block) getEntry(off int) (key, value []byte, kShared, size int, err error) {
 	if off > b.restartsOffset {
-		// TODO: the file would be broken, should bring more infomation
-		err = gerrors.ErrTableCorrupted
+		err = &ErrCorrupted{Reason: "entries offset not aligned"}
 		return
 	}
 	if off == b.restartsOffset {
@@ -60,8 +61,7 @@ func (b *block) getEntry(off int) (key, value []byte, kShared, size int, err err
 	headerLen := sharedBytes + keyLenBytes + valueLenBytes
 	size = headerLen + int(keyLen) + int(valueLen)
 	if sharedBytes <= 0 || keyLenBytes <= 0 || valueLenBytes <= 0 || off+size > b.restartsOffset {
-		// TODO: the file would be broken, should bring more infomation
-		err = gerrors.ErrTableCorrupted
+		err = &ErrCorrupted{Reason: "entries corrupted"}
 		return
 	}
 
@@ -71,7 +71,7 @@ func (b *block) getEntry(off int) (key, value []byte, kShared, size int, err err
 	return
 }
 
-func (b *block) Close() {
+func (b *block) Release() {
 	b.bpool.Put(b.data)
 	b.bpool = nil
 	b.data = nil

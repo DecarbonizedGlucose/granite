@@ -20,10 +20,6 @@ var (
 )
 
 // SSTable errors
-var (
-	ErrTableCorrupted = errors.New("granite/sstable: broken sstable")
-)
-
 type ErrFileCorrupted struct {
 	Fd  util.FileDesc
 	Err error

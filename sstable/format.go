@@ -5,9 +5,12 @@ import (
 )
 
 const (
-	blockTrailerLen            = 5
-	footerLen                  = 48
-	magicByte                  = "\x11\x45\x14\x19" // temp decision
+	blockTrailerLen = 5
+	footerLen       = 48
+
+	// First 64-bit of sum of "https://github.com/DecarbonizedGlucose/granite/".
+	magicByte = "\x2a\x4f\x21\xd8\x05\xbd\xe3\xcf"
+
 	blockTypeNoCompression     = 0
 	blockTypeSnappyCompression = 1
 )
