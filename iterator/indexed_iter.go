@@ -1,6 +1,7 @@
 package iterator
 
 import (
+	gerrors "github.com/DecarbonizedGlucose/granite/errors"
 	"github.com/DecarbonizedGlucose/granite/util"
 )
 
@@ -47,13 +48,15 @@ func (i *indexedIterator) dataErr() bool {
 		if i.errf != nil {
 			i.errf(err)
 		}
-		i.err = err
-		return true
+		if i.strict || !gerrors.IsCorrupted(err) {
+			i.err = err
+			return true
+		}
 	}
 	return false
 }
 
-func (i *indexedIterator) Close() {
+func (i *indexedIterator) Release() {
 	i.clearData()
 	i.index.Release()
 	i.BasicReleaser.Release()

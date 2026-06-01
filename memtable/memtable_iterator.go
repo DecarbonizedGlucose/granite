@@ -24,9 +24,9 @@ func (i *mtIter) peek(checkStart, checkLimit bool) bool {
 		i.curKey = i.m.kvData[ko:vo]
 		if i.r != nil {
 			switch {
-			case checkStart && i.r.Limit != nil && i.m.cmp.Compare(i.curKey, i.r.Limit) >= 0:
+			case checkLimit && i.r.Limit != nil && i.m.cmp.Compare(i.curKey, i.r.Limit) >= 0:
 				fallthrough
-			case checkLimit && i.r.Start != nil && i.m.cmp.Compare(i.curKey, i.r.Start) < 0:
+			case checkStart && i.r.Start != nil && i.m.cmp.Compare(i.curKey, i.r.Start) < 0:
 				i.curNodeIdx = 0
 				goto bail
 			}
@@ -158,8 +158,10 @@ func (i *mtIter) Close() {
 	}
 	i.m = nil
 	i.r = nil
+	i.curNodeIdx = 0
 	i.curKey = nil
 	i.curValue = nil
+	i.BasicReleaser.Release()
 }
 
 func NewMTIter() iterator.InternalIterator {
