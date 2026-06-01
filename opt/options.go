@@ -58,6 +58,7 @@ var (
 	DefaultBlockRestartGap               = 16
 	DefaultCompactionExpandLimitFactor   = 25
 	DefaultCompactionGPOverlapsFactor    = 10
+	DefaultCompactionL0Trigger           = 4
 	DefaultCompactionSourceLimitFactor   = 1
 	DefaultCompactionTableSize           = 2 * MiB
 	DefaultCompactionTableSizeMultiplier = 1.0
@@ -128,6 +129,9 @@ type Options struct {
 	// CompactionGPOverlapsFactor limits overlaps in grandparent (Level + 2) that a
 	// single 'sorted table' generates.
 	CompactionGPOverlapsFactor int
+	// CompactionL0Trigger defines number of 'sorted table' at level-0 that will
+	// trigger compaction.
+	CompactionL0Trigger int
 	// CompactionSourceLimitFactor limits compaction source size.
 	// This doesn't apply to level-0.
 	CompactionSourceLimitFactor int
@@ -153,8 +157,12 @@ type Options struct {
 	DisableBufferPool bool
 	// allows disable use of cache.Cache for 'sorted table' blocks
 	DisableBlockCache bool
-	Filter            filter.FilterPolicy
-	FilterBaseLg      int
+	// DisableSeekCompaction allows disabling 'seeks triggered compactoin', which
+	// purpose if to optimize database so that 'level seeks' can be minimized, however
+	// this might generate many small compaction which may not preferable.
+	DisableSeeksCompaction bool
+	Filter                 filter.FilterPolicy
+	FilterBaseLg           int
 	// NoSync allows completely disable fsync().
 	NoSync bool
 	// NoWriteMerge allows disable write merging.
@@ -228,6 +236,13 @@ func (o *Options) GetCompactionGPOverlaps(level int) int {
 		factor = o.CompactionGPOverlapsFactor
 	}
 	return o.GetCompactionTableSize(level+2) * factor
+}
+
+func (o *Options) GetCompactionL0Trigger() int {
+	if o == nil || o.CompactionL0Trigger == 0 {
+		return DefaultCompactionL0Trigger
+	}
+	return o.CompactionL0Trigger
 }
 
 func (o *Options) GetCompactionSourceLimit(level int) int {
@@ -306,6 +321,13 @@ func (o *Options) GetDisableBlockCache() bool {
 		return false
 	}
 	return o.DisableBlockCache
+}
+
+func (o *Options) GetDisableSeeksCompaction() bool {
+	if o == nil {
+		return false
+	}
+	return o.DisableSeeksCompaction
 }
 
 func (o *Options) GetFilter() filter.FilterPolicy {
