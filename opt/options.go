@@ -16,11 +16,23 @@ const (
 
 type CompressionType int
 
+func (c CompressionType) String() string {
+	switch c {
+	case DefaultCompression:
+		return "default"
+	case NoCompression:
+		return "none"
+	case SnappyCompression:
+		return "snappy"
+	}
+	return "invalid"
+}
+
 const (
-	DefaultCompression CompressionType = 0
-	NoCompression      CompressionType = 1
-	SnappyCompression  CompressionType = 2
-	ZSTDCompression    CompressionType = 3
+	DefaultCompression CompressionType = iota
+	NoCompression
+	SnappyCompression
+	nCompression
 )
 
 type Strict uint // DB strict level
@@ -137,8 +149,16 @@ type Options struct {
 	CompactionTotalSizeMultiplierPerLevel []float64
 	Comparer                              comparer.Comparer
 	Compression                           CompressionType
+	// allows disable use of util.BufferPool
+	DisableBufferPool bool
 	// allows disable use of cache.Cache for 'sorted table' blocks
 	DisableBlockCache bool
+	Filter            filter.FilterPolicy
+	FilterBaseLg      int
+	// NoSync allows completely disable fsync().
+	NoSync bool
+	// NoWriteMerge allows disable write merging.
+	NoWriteMerge bool
 	// OpenFilesCacher provides cache algorithm for open files caching.
 	OpenFilesCacher Cacher
 	// OpenFilesCacheCapacity is the capacity for open files caching.
@@ -274,6 +294,13 @@ func (o *Options) GetCompressionType() CompressionType {
 	return o.Compression
 }
 
+func (o *Options) GetDisableBufferPool() bool {
+	if o == nil {
+		return false
+	}
+	return o.DisableBufferPool
+}
+
 func (o *Options) GetDisableBlockCache() bool {
 	if o == nil {
 		return false
@@ -293,6 +320,20 @@ func (o *Options) GetFilterBaseLg() int {
 		return DefaultFilterBaseLg
 	}
 	return o.FilterBaseLg
+}
+
+func (o *Options) GetNoSync() bool {
+	if o == nil {
+		return false
+	}
+	return o.NoSync
+}
+
+func (o *Options) GetNoWriteMerge() bool {
+	if o == nil {
+		return false
+	}
+	return o.NoWriteMerge
 }
 
 func (o *Options) GetOpenFilesCacher() Cacher {
