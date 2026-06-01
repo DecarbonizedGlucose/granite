@@ -43,6 +43,6 @@ func (i *emptyIterator) Error() error     { return i.err }
 func (i *emptyIterator) Close() error     { return i.err }
 func (i *emptyIterator) Closed() bool     { return i.closed }
 
-func NewEmprtIterator(err error) InternalIterator {
+func NewEmptyIterator(err error) InternalIterator {
 	return &emptyIterator{err: err}
 }

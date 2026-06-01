@@ -287,7 +287,7 @@ func (r *TableReader) newBlockIter(b *block, slice *util.Range, inclLimit bool) 
 func (r *TableReader) getDataIter(dataBP blockPointer, slice *util.Range, verifyChecksum, fillCahce bool) iterator.InternalIterator {
 	b, err := r.readBlockCached(dataBP, verifyChecksum, fillCahce)
 	if err != nil {
-		return iterator.NewEmprtIterator(err)
+		return iterator.NewEmptyIterator(err)
 	}
 	return r.newBlockIter(b, slice, false)
 }
@@ -297,7 +297,7 @@ func (r *TableReader) getDataIterErr(dataBP blockPointer, slice *util.Range, ver
 	defer r.mu.RUnlock()
 
 	if r.err != nil {
-		return iterator.NewEmprtIterator(r.err)
+		return iterator.NewEmptyIterator(r.err)
 	}
 	return r.getDataIter(dataBP, slice, verifyChecksum, fillCahce)
 }
@@ -311,13 +311,13 @@ func (r *TableReader) NewIterator(slice *util.Range, ro *opt.ReadOptions) iterat
 	defer r.mu.RUnlock()
 
 	if r.err != nil {
-		return iterator.NewEmprtIterator(r.err)
+		return iterator.NewEmptyIterator(r.err)
 	}
 
 	fillCache := !ro.GetDontFillCache()
 	indexBlock, err := r.getIndexBlock(fillCache)
 	if err != nil {
-		return iterator.NewEmprtIterator(err)
+		return iterator.NewEmptyIterator(err)
 	}
 	index := &indexIter{
 		blockIter: r.newBlockIter(indexBlock, slice, true),
@@ -653,7 +653,7 @@ func (i *indexIter) Get() iterator.InternalIterator {
 	}
 	dataBP, n := decodeBlockPointer(value)
 	if n == 0 {
-		return iterator.NewEmprtIterator(i.r.newErrorCorruptedBP(i.r.indexBP, "bad data block pointer"))
+		return iterator.NewEmptyIterator(i.r.newErrorCorruptedBP(i.r.indexBP, "bad data block pointer"))
 	}
 
 	var slice *util.Range
