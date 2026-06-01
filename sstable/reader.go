@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/golang/snappy"
@@ -327,7 +328,7 @@ func (r *TableReader) NewIterator(slice *util.Range, ro *opt.ReadOptions) iterat
 	return iterator.NewIndexedIterator(index, opt.GetStrict(r.o, ro, opt.StrictReader))
 }
 
-func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov bool) (rkey []byte, value []byte, err error) {
+func (r *TableReader) find(key []byte, filtered bool, ro *opt.ReadOptions, nov bool) (rkey, value []byte, err error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -429,11 +430,15 @@ func (r *TableReader) Find(key []byte, filtered bool, ro *opt.ReadOptions) (rkey
 	return r.find(key, filtered, ro, false)
 }
 
-func (r *TableReader) FindKey(key []byte, filtered bool, ro *opt.ReadOptions) (rkey, value []byte, err error) {
+func (r *TableReader) FindKey(key []byte, filtered bool, ro *opt.ReadOptions) (rkey []byte, err error) {
 	rkey, _, err = r.find(key, filtered, ro, true)
 	return
 }
 
+// Get gets the value for given key. If the key does not
+// exist, ErrNotFound is returned.
+//
+// Returnd value can be modified.
 func (r *TableReader) Get(key []byte, ro *opt.ReadOptions) (value []byte, err error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -451,6 +456,9 @@ func (r *TableReader) Get(key []byte, ro *opt.ReadOptions) (value []byte, err er
 	return
 }
 
+// OffsetOf returns approximate offset of the given key.
+//
+// Returned offset can be modified.
 func (r *TableReader) OffsetOf(key []byte) (off int64, err error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -485,6 +493,8 @@ func (r *TableReader) OffsetOf(key []byte) (off int64, err error) {
 	return
 }
 
+// Close releases all resources used by the reader.
+// It also close the file if it is and io.Closer.
 func (r *TableReader) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -506,8 +516,125 @@ func (r *TableReader) Close() {
 	r.err = ErrReaderReleased
 }
 
-func NewReader() (*TableReader, error) {
-	return nil, nil
+// NewReader creates a new initialized TableReader for the file.
+// The fi, cache and bpool can be nil.
+//
+// The returned TableReader instance is safe for concurrent use.
+func NewReader(f io.ReaderAt, size int64, fd util.FileDesc, cache *cache.NamespaceGetter, bpool *util.BufferPool, o *opt.Options) (*TableReader, error) {
+	if f == nil {
+		return nil, errors.New("granite/sstable: nil file")
+	}
+
+	r := &TableReader{
+		fd:            fd,
+		reader:        f,
+		cache:         cache,
+		bpool:         bpool,
+		o:             o,
+		cmp:           o.GetComparer(),
+		verifyCheksum: o.GetStrict(opt.StrictBlockChecksum),
+	}
+
+	if size < footerLen {
+		r.err = r.newErrorCorrupted(0, size, "table", "too small")
+		return r, nil
+	}
+
+	footerPos := size - footerLen
+	var footer [footerLen]byte
+	if _, err := r.reader.ReadAt(footer[:], footerPos); err != nil && err != io.EOF {
+		return nil, err
+	}
+	if string(footer[footerLen-len(magicByte):footerLen]) != magicByte {
+		r.err = r.newErrorCorrupted(footerPos, footerLen, "table-footer", "bad magic number")
+		return r, nil
+	}
+
+	var n int
+	// Decode mataindex block pointer
+	r.metaBP, n = decodeBlockPointer(footer[:])
+	if n == 0 {
+		r.err = r.newErrorCorrupted(footerPos, footerLen, "table-footer", "bad metaindex block pointer")
+		return r, nil
+	}
+
+	// Decode index block pointer
+	r.indexBP, n = decodeBlockPointer(footer[n:])
+	if n == 0 {
+		r.err = r.newErrorCorrupted(footerPos, footerLen, "table-footer", "bad index block pointer")
+		return r, nil
+	}
+
+	// Read metaindex block
+	metaBlock, err := r.readBlock(r.metaBP, true)
+	if err != nil {
+		if gerrors.IsCorrupted(err) {
+			r.err = err
+			return r, nil
+		}
+		return nil, err
+	}
+
+	// Set data end
+	r.dataEndPos = int64(r.metaBP.offset)
+
+	// Read metaindex
+	metaIter := r.newBlockIter(metaBlock, nil, true)
+	for metaIter.Next() {
+		key := string(metaIter.Key())
+		if !strings.HasPrefix(key, "filter.") {
+			continue
+		}
+		fn := key[7:]
+		if f0 := r.o.GetFilter(); f0 != nil && f0.Name() == fn {
+			r.filter = f0
+		} else {
+			for _, f0 := range r.o.GetAltFilters() {
+				if f0.Name() == fn {
+					r.filter = f0
+					break
+				}
+			}
+		}
+		if r.filter != nil {
+			filterBP, n := decodeBlockPointer(metaIter.Value())
+			if n == 0 {
+				continue
+			}
+			r.filterBP = filterBP
+			// update data end
+			r.dataEndPos = int64(filterBP.offset)
+			break
+		}
+	}
+	metaIter.Close()
+	metaBlock.Close()
+
+	// Cache index and filter block locally, since we do not have global cache.
+	if cache == nil {
+		r.indexBlock, err = r.readBlock(r.indexBP, true)
+		if err != nil {
+			if gerrors.IsCorrupted(err) {
+				r.err = err
+				return r, nil
+			}
+			return nil, err
+		}
+		if r.filter != nil {
+			r.filterBlock, err = r.readFilterBlock(r.filterBP)
+			if err != nil {
+				r.filterBlock, err = r.readFilterBlock(r.filterBP)
+				if err != nil {
+					if !gerrors.IsCorrupted(err) {
+						return nil, err
+					}
+					r.filter = nil
+				}
+			}
+		}
+	}
+
+	return r, nil
 }
 
 // ==================== index iterator ====================
