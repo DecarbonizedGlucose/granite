@@ -66,6 +66,7 @@ var (
 	DefaultCompactionTotalSizeMultiplier = 10.0
 	DefaultCompressionType               = SnappyCompression
 	DefaultFilterBaseLg                  = 11
+	DefaultMaxManifestFileSize           = int64(64 * MiB)
 	DefaultOpenFilesCacher               = LRUCacher
 	DefaultOpenFilesCacheCapacity        = 4 * MiB
 	DefaultWriteBufferSize               = 4 * MiB
@@ -163,6 +164,7 @@ type Options struct {
 	DisableSeeksCompaction bool
 	Filter                 filter.FilterPolicy
 	FilterBaseLg           int
+	MaxManifestFileSize    int64
 	// NoSync allows completely disable fsync().
 	NoSync bool
 	// NoWriteMerge allows disable write merging.
@@ -430,4 +432,11 @@ func GetStrict(o *Options, ro *ReadOptions, strict Strict) bool {
 		return ro.GetStrict(strict)
 	}
 	return o.GetStrict(strict) || ro.GetStrict(strict)
+}
+
+func (o *Options) GetMaxManifestFileSize() int64 {
+	if o == nil || o.MaxManifestFileSize <= 0 {
+		return DefaultMaxManifestFileSize
+	}
+	return o.MaxManifestFileSize
 }

@@ -19,6 +19,21 @@ var (
 	ErrClosed      = errors.New("granite/storage: closed")
 )
 
+// ErrManifestCorrupted records manifest corruption. This error will be
+// wrapped with errors.ErrCorrupted.
+type ErrManifestCorrupted struct {
+	Field  string
+	Reason string
+}
+
+func (e *ErrManifestCorrupted) Error() string {
+	return fmt.Sprintf("leveldb: manifest corrupted (field '%s'): %s", e.Field, e.Reason)
+}
+
+func NewErrManifestCorrupted(fd util.FileDesc, field, reason string) error {
+	return NewErrFileCorrupted(fd, &ErrManifestCorrupted{field, reason})
+}
+
 // SSTable errors
 type ErrFileCorrupted struct {
 	Fd  util.FileDesc
@@ -57,3 +72,14 @@ var (
 	ErrJournalNilKey           = errors.New("granite: nil journal entry key")
 	ErrJournalNilValue         = errors.New("granite: nil journal entry value")
 )
+
+// SetFd trys to set file information to error.
+func SetFd(err error, fd util.FileDesc) error {
+	switch x := err.(type) {
+	case *ErrFileCorrupted:
+		x.Fd = fd
+		return x
+	default:
+		return err
+	}
+}
