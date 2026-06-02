@@ -74,7 +74,7 @@ func (r *JournalReader) corrupt(n int, reason string, skip bool) error {
 	if r.dropper != nil {
 		r.dropper.Drop(&ErrCorrupted{n, reason})
 	}
-	if !skip {
+	if r.strict && !skip {
 		r.err = gerrors.NewErrFileCorrupted(util.FileDesc{}, &ErrCorrupted{n, reason})
 		return r.err
 	}
